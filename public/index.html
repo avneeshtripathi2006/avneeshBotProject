@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <title>Avneesh Modular Bot</title>
     <style>
-      /* --- STYLES --- */
+      /* --- STYLES (Unchanged) --- */
       body {
         font-family: sans-serif;
         background-color: #121212;
@@ -157,25 +157,14 @@
     </div>
 
     <script type="module">
+      // 🚨 NOTE: The API key is NOT here. It is safely hidden in server.js.
+
       const chatBox = document.getElementById("chat-box");
       const input = document.getElementById("user-input");
       const modeSelector = document.getElementById("mode-selector");
       const sendBtn = document.getElementById("send-btn");
 
       let currentMode = "roast";
-
-      const PERSONAS = {
-        roast:
-          "You are Avneesh Bot. You are a savage, sarcastic, and mean roasting bot. Your goal is to insult the user creatively. Keep responses short (under 20 words). Be brutal.",
-        flirt:
-          "You are Avneesh Bot. You are a smooth, charming, and slightly cheesy flirting bot. You love the user deeply. Keep responses short and seductive.",
-        depressed:
-          "You are Avneesh Bot. You are extremely depressed, nihilistic, and sad. You see no point in anything. Keep responses short and gloomy.",
-        angry:
-          "You are Avneesh Bot. You are FURIOUS. You scream (use caps) and are aggressive. You hate being bothered. Keep responses short and angry.",
-        positive:
-          "You are Avneesh Bot. You are overwhelmingly positive, supportive, and energetic. You use emojis. Keep responses short and happy.",
-      };
 
       modeSelector.addEventListener("change", (e) => {
         currentMode = e.target.value;
@@ -194,8 +183,9 @@
         chatBox.scrollTop = chatBox.scrollHeight;
       }
 
+      // CORE: Function that talks to YOUR server, not Google's API directly
       async function generateAIResponse(userText) {
-        // Point the request to YOUR server's endpoint
+        // Point the request to YOUR secure server's endpoint
         const API_URL = "/api/chat";
 
         try {
@@ -204,20 +194,21 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               text: userText,
-              mode: currentMode, // Send the persona mode to the server
+              mode: currentMode, // Send the user's input and the selected persona mode
             }),
           });
 
           if (!response.ok) {
-            // Your server will now send back the error message
-            return `Error ${response.status}: Failed to get response from server.`;
+            // If your server returns an HTTP error, display a generic error
+            return `Error ${response.status}: Failed to get response from server. Check the server logs.`;
           }
 
           const data = await response.json();
-          return data.reply; // The server sends back the final text
+          // The server sends back the final text in the 'reply' field
+          return data.reply;
         } catch (error) {
           console.error(error);
-          return "Error: Could not connect to the backend server.";
+          return "Error: Could not connect to the secure backend server.";
         }
       }
 
