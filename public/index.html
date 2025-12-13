@@ -2,140 +2,232 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Avneesh Modular Bot</title>
+    <title>Avneesh Modular Bot - Mobile Optimized</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> 
     <style>
-      /* --- STYLES (Unchanged) --- */
+      /* --- CORE STYLES --- */
       body {
-        font-family: sans-serif;
-        background-color: #121212;
-        color: white;
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: #1a1a2e;
+        color: #f0f0f0;
         display: flex;
         justify-content: center;
         align-items: center;
         height: 100vh;
         margin: 0;
         transition: background 0.5s;
+        /* Prevent font size adjustment on some mobile browsers */
+        -webkit-text-size-adjust: 100%;
       }
       .container {
         width: 100%;
-        max-width: 500px;
-        height: 85vh;
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 15px;
+        max-width: 550px;
+        height: 90vh; 
+        background: #25253e;
+        border-radius: 20px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
         display: flex;
         flex-direction: column;
         overflow: hidden;
-        border: 1px solid #333;
       }
+
+      /* --- HEADER & MODE SELECTOR --- */
       .header {
-        padding: 15px;
-        background: rgba(0, 0, 0, 0.3);
+        padding: 20px;
+        background: #1a1a2e;
+        border-bottom: 1px solid #333;
         text-align: center;
+      }
+      .header h2 {
+        margin: 0 0 5px 0;
+        color: #e0f7fa;
+      }
+      .mode-badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 0.8rem;
+        font-weight: bold;
+        margin-top: 10px;
+        color: white;
+        background-color: #555; 
       }
       select {
         width: 100%;
         padding: 10px;
-        border-radius: 20px;
-        border: none;
-        font-weight: bold;
+        border-radius: 8px;
+        border: 1px solid #4a4a6d;
+        background-color: #3e3e60;
+        color: white;
+        font-weight: 500;
         cursor: pointer;
-        margin-top: 5px;
+        margin-top: 15px;
+        appearance: none;
       }
+      
+      /* --- CHAT BOX --- */
       #chat-box {
         flex-grow: 1;
         padding: 20px;
         overflow-y: auto;
         scroll-behavior: smooth;
+        background-color: #25253e;
       }
+      #chat-box::-webkit-scrollbar { width: 8px; }
+      #chat-box::-webkit-scrollbar-thumb { background: #5a5a8a; border-radius: 10px; }
+
+      /* --- MESSAGES --- */
       .message {
-        margin-bottom: 10px;
-        padding: 10px 15px;
-        border-radius: 15px;
-        max-width: 80%;
+        margin-bottom: 15px;
+        padding: 12px 18px;
+        border-radius: 18px;
+        max-width: 85%;
         word-wrap: break-word;
+        line-height: 1.5;
+        font-size: 1rem;
+        animation: fadeIn 0.3s ease-in-out;
       }
       .user {
-        align-self: flex-end;
-        background: #444;
+        background: #007bff;
+        color: white;
         margin-left: auto;
-        border-bottom-right-radius: 2px;
+        border-bottom-right-radius: 4px;
       }
       .bot {
-        align-self: flex-start;
-        border-bottom-left-radius: 2px;
-        font-weight: 500;
+        background: #3e3e60;
+        color: #e0f7fa;
+        margin-right: auto;
+        border-bottom-left-radius: 4px;
+        font-weight: 400;
       }
+      
+      /* --- INPUT AREA --- */
       #input-area {
         display: flex;
-        padding: 15px;
-        background: rgba(0, 0, 0, 0.2);
+        padding: 15px 20px;
+        background: #1a1a2e;
+        border-top: 1px solid #333;
       }
       input {
         flex-grow: 1;
-        padding: 12px;
-        border-radius: 20px;
+        padding: 12px 18px;
+        border-radius: 25px;
         border: none;
         margin-right: 10px;
+        background-color: #3e3e60;
+        color: white;
+        font-size: 1rem;
+        outline: none;
+        transition: background 0.2s;
+      }
+      input:focus {
+          background-color: #4a4a6d;
       }
       button {
         padding: 10px 20px;
-        border-radius: 20px;
+        border-radius: 25px;
         border: none;
         cursor: pointer;
         font-weight: bold;
+        background: #007bff;
+        color: white;
+        transition: background 0.2s;
+      }
+      button:hover {
+          background: #0056b3;
       }
 
-      /* THEMES */
-      body.mode-roast {
-        background: #1a0f0f;
+      /* --- LOADING ANIMATION --- */
+      .loading {
+        font-size: 1.5rem;
+        letter-spacing: 0.3em;
       }
-      .mode-roast .bot,
-      .mode-roast button {
-        background: #ff4500;
-        color: white;
+      .loading::after {
+          content: '...';
+          animation: dots 1.5s linear infinite;
       }
-
-      body.mode-flirt {
-        background: #1a050a;
+      @keyframes dots {
+        0%, 20% { content: '.'; }
+        40% { content: '..'; }
+        60%, 100% { content: '...'; }
       }
-      .mode-flirt .bot,
-      .mode-flirt button {
-        background: #ff1493;
-        color: white;
-      }
-
-      body.mode-depressed {
-        background: #10151a;
-      }
-      .mode-depressed .bot,
-      .mode-depressed button {
-        background: #4a5a6a;
-        color: white;
+      @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
       }
 
-      body.mode-angry {
-        background: #200000;
-      }
-      .mode-angry .bot,
-      .mode-angry button {
-        background: #8b0000;
-        color: white;
-      }
+      /* --- THEMES (Unchanged) --- */
+      body.mode-roast { background: #281919; }
+      .mode-roast .bot, .mode-roast button { background: #ff5722; color: white; }
+      .mode-roast .mode-badge { background-color: #ff5722; }
 
-      body.mode-positive {
-        background: #0f1a0f;
-      }
-      .mode-positive .bot,
-      .mode-positive button {
-        background: #00c853;
-        color: white;
+      body.mode-flirt { background: #2e1a2e; }
+      .mode-flirt .bot, .mode-flirt button { background: #e91e63; color: white; }
+      .mode-flirt .mode-badge { background-color: #e91e63; }
+
+      body.mode-depressed { background: #1a232f; }
+      .mode-depressed .bot, .mode-depressed button { background: #607d8b; color: white; }
+      .mode-depressed .mode-badge { background-color: #607d8b; }
+
+      body.mode-angry { background: #3c1e1e; }
+      .mode-angry .bot, .mode-angry button { background: #f44336; color: white; }
+      .mode-angry .mode-badge { background-color: #f44336; }
+
+      body.mode-positive { background: #1e3a1e; }
+      .mode-positive .bot, .mode-positive button { background: #4caf50; color: white; }
+      .mode-positive .mode-badge { background-color: #4caf50; }
+
+      /* ================================================================= */
+      /* 📱 MOBILE OPTIMIZATION (Media Queries) */
+      /* ================================================================= */
+      @media (max-width: 600px) {
+        body {
+            /* Ensures the app fills the entire screen on mobile */
+            height: 100dvh; /* Use dVH (Dynamic Viewport Height) for best mobile compatibility */
+        }
+        
+        .container {
+            width: 100%;
+            height: 100dvh; /* Full screen height */
+            max-width: none;
+            border-radius: 0; /* No rounded corners on the screen edges */
+            box-shadow: none;
+        }
+
+        /* Increase padding on chat and input for easier tapping */
+        #chat-box {
+            padding: 15px;
+        }
+        .message {
+            font-size: 0.95rem; /* Slightly smaller font for better fit */
+        }
+
+        /* Input field and button sizing */
+        #input-area {
+            padding: 10px 15px;
+        }
+        input {
+            padding: 12px 15px;
+            font-size: 0.95rem;
+        }
+        button {
+            padding: 12px 18px; /* Slightly more vertical padding for easier thumb tapping */
+            font-size: 0.95rem;
+        }
+
+        /* Ensure the header text fits */
+        .header h2 {
+            font-size: 1.5rem;
+        }
       }
     </style>
   </head>
   <body class="mode-roast">
     <div class="container">
       <div class="header">
-        <h3>Avneesh AI Bot</h3>
+        <h2>Avneesh Bot v2.0</h2>
+        <p style="margin: 5px 0 0; font-size: 0.9rem; color: #aaa;">Select a persona below to begin interacting.</p>
+        <span id="current-mode-display" class="mode-badge">🔥 ROAST MODE</span>
         <select id="mode-selector">
           <option value="roast">🔥 Roast Mode</option>
           <option value="flirt">💖 Flirt Mode</option>
@@ -149,7 +241,7 @@
         <input
           type="text"
           id="user-input"
-          placeholder="Type here..."
+          placeholder="Ask Avneesh something..."
           autocomplete="off"
         />
         <button id="send-btn">Send</button>
@@ -157,55 +249,56 @@
     </div>
 
     <script type="module">
-      // 🚨 NOTE: The API key is NOT here. It is safely hidden in server.js.
-
       const chatBox = document.getElementById("chat-box");
       const input = document.getElementById("user-input");
       const modeSelector = document.getElementById("mode-selector");
       const sendBtn = document.getElementById("send-btn");
+      const modeDisplay = document.getElementById("current-mode-display");
 
       let currentMode = "roast";
+
+      const MODE_LABELS = {
+          roast: "🔥 ROAST MODE",
+          flirt: "💖 FLIRT MODE",
+          depressed: "🌧️ DEPRESSED MODE",
+          angry: "😡 ANGRY MODE",
+          positive: "✨ POSITIVE MODE"
+      };
 
       modeSelector.addEventListener("change", (e) => {
         currentMode = e.target.value;
         document.body.className = `mode-${currentMode}`;
-        addMessage(
-          `System: Switched to ${currentMode.toUpperCase()} mode.`,
-          "bot"
-        );
+        modeDisplay.innerText = MODE_LABELS[currentMode];
+        addMessage(`System: Switched to ${currentMode.toUpperCase()} mode.`, "bot");
       });
 
-      function addMessage(text, sender) {
+      function addMessage(text, sender, isLoading = false) {
         const div = document.createElement("div");
-        div.className = `message ${sender}`;
+        div.className = `message ${sender} ${isLoading ? 'loading' : ''}`;
         div.innerText = text;
         chatBox.appendChild(div);
         chatBox.scrollTop = chatBox.scrollHeight;
       }
 
-      // CORE: Function that talks to YOUR server, not Google's API directly
       async function generateAIResponse(userText) {
-        // Point the request to YOUR secure server's endpoint
         const API_URL = "/api/chat";
-
+        
         try {
           const response = await fetch(API_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               text: userText,
-              mode: currentMode, // Send the user's input and the selected persona mode
+              mode: currentMode
             }),
           });
 
           if (!response.ok) {
-            // If your server returns an HTTP error, display a generic error
-            return `Error ${response.status}: Failed to get response from server. Check the server logs.`;
+             return `Error ${response.status}: Failed to get response from server.`;
           }
 
           const data = await response.json();
-          // The server sends back the final text in the 'reply' field
-          return data.reply;
+          return data.reply; 
         } catch (error) {
           console.error(error);
           return "Error: Could not connect to the secure backend server.";
@@ -218,18 +311,22 @@
 
         addMessage(text, "user");
         input.value = "";
+        sendBtn.disabled = true;
 
         const loadingId = "loading-" + Date.now();
-        const loadingDiv = document.createElement("div");
-        loadingDiv.className = "message bot";
-        loadingDiv.id = loadingId;
-        loadingDiv.innerText = "...";
-        chatBox.appendChild(loadingDiv);
-
+        addMessage("", "bot", true); 
+        
         const reply = await generateAIResponse(text);
 
-        document.getElementById(loadingId).remove();
-        addMessage(reply, "bot");
+        const loadingDiv = chatBox.lastElementChild;
+        if (loadingDiv && loadingDiv.classList.contains('loading')) {
+            loadingDiv.classList.remove('loading');
+            loadingDiv.innerText = reply;
+        } else {
+            addMessage(reply, "bot");
+        }
+        
+        sendBtn.disabled = false;
       }
 
       sendBtn.addEventListener("click", handleInput);
@@ -237,7 +334,8 @@
         if (e.key === "Enter") handleInput();
       });
 
-      addMessage("I am Avneesh AI. Ready to chat!", "bot");
+      modeDisplay.innerText = MODE_LABELS[currentMode];
+      addMessage("I am Avneesh AI. Select a mode and let's start chatting!", "bot");
     </script>
   </body>
 </html>
