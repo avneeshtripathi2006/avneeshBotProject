@@ -21,7 +21,7 @@ const port = process.env.PORT || 3000;
 // OLLAMA_URL is the ngrok URL (e.g., https://unimposing-noble-subtly.ngrok-free.dev)
 const OLLAMA_URL = process.env.OLLAMA_URL; 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // Your original key for fallback
-const OLLAMA_MODEL = "mistral"; // The model you are running locally via Ollama
+const OLLAMA_MODEL = "mistral:latest"; // The model you are running locally via Ollama
 
 // Ollama API endpoint for generation is always /api/generate
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null; 
