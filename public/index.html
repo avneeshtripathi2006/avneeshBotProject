@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Avneesh Modular Bot</title>
+    <style>
+      /* --- STYLES --- */
+      body {
+        font-family: sans-serif;
+        background-color: #121212;
+        color: white;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        margin: 0;
+        transition: background 0.5s;
+      }
+      .container {
+        width: 100%;
+        max-width: 500px;
+        height: 85vh;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 15px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        border: 1px solid #333;
+      }
+      .header {
+        padding: 15px;
+        background: rgba(0, 0, 0, 0.3);
+        text-align: center;
+      }
+      select {
+        width: 100%;
+        padding: 10px;
+        border-radius: 20px;
+        border: none;
+        font-weight: bold;
+        cursor: pointer;
+        margin-top: 5px;
+      }
+      #chat-box {
+        flex-grow: 1;
+        padding: 20px;
+        overflow-y: auto;
+        scroll-behavior: smooth;
+      }
+      .message {
+        margin-bottom: 10px;
+        padding: 10px 15px;
+        border-radius: 15px;
+        max-width: 80%;
+        word-wrap: break-word;
+      }
+      .user {
+        align-self: flex-end;
+        background: #444;
+        margin-left: auto;
+        border-bottom-right-radius: 2px;
+      }
+      .bot {
+        align-self: flex-start;
+        border-bottom-left-radius: 2px;
+        font-weight: 500;
+      }
+      #input-area {
+        display: flex;
+        padding: 15px;
+        background: rgba(0, 0, 0, 0.2);
+      }
+      input {
+        flex-grow: 1;
+        padding: 12px;
+        border-radius: 20px;
+        border: none;
+        margin-right: 10px;
+      }
+      button {
+        padding: 10px 20px;
+        border-radius: 20px;
+        border: none;
+        cursor: pointer;
+        font-weight: bold;
+      }
+
+      /* THEMES */
+      body.mode-roast {
+        background: #1a0f0f;
+      }
+      .mode-roast .bot,
+      .mode-roast button {
+        background: #ff4500;
+        color: white;
+      }
+
+      body.mode-flirt {
+        background: #1a050a;
+      }
+      .mode-flirt .bot,
+      .mode-flirt button {
+        background: #ff1493;
+        color: white;
+      }
+
+      body.mode-depressed {
+        background: #10151a;
+      }
+      .mode-depressed .bot,
+      .mode-depressed button {
+        background: #4a5a6a;
+        color: white;
+      }
+
+      body.mode-angry {
+        background: #200000;
+      }
+      .mode-angry .bot,
+      .mode-angry button {
+        background: #8b0000;
+        color: white;
+      }
+
+      body.mode-positive {
+        background: #0f1a0f;
+      }
+      .mode-positive .bot,
+      .mode-positive button {
+        background: #00c853;
+        color: white;
+      }
+    </style>
+  </head>
+  <body class="mode-roast">
+    <div class="container">
+      <div class="header">
+        <h3>Avneesh AI Bot</h3>
+        <select id="mode-selector">
+          <option value="roast">🔥 Roast Mode</option>
+          <option value="flirt">💖 Flirt Mode</option>
+          <option value="depressed">🌧️ Depressed Mode</option>
+          <option value="angry">😡 Angry Mode</option>
+          <option value="positive">✨ Positive Mode</option>
+        </select>
+      </div>
+      <div id="chat-box"></div>
+      <div id="input-area">
+        <input
+          type="text"
+          id="user-input"
+          placeholder="Type here..."
+          autocomplete="off"
+        />
+        <button id="send-btn">Send</button>
+      </div>
+    </div>
+
+    <script type="module">
+      const chatBox = document.getElementById("chat-box");
+      const input = document.getElementById("user-input");
+      const modeSelector = document.getElementById("mode-selector");
+      const sendBtn = document.getElementById("send-btn");
+
+      let currentMode = "roast";
+
+      const PERSONAS = {
+        roast:
+          "You are Avneesh Bot. You are a savage, sarcastic, and mean roasting bot. Your goal is to insult the user creatively. Keep responses short (under 20 words). Be brutal.",
+        flirt:
+          "You are Avneesh Bot. You are a smooth, charming, and slightly cheesy flirting bot. You love the user deeply. Keep responses short and seductive.",
+        depressed:
+          "You are Avneesh Bot. You are extremely depressed, nihilistic, and sad. You see no point in anything. Keep responses short and gloomy.",
+        angry:
+          "You are Avneesh Bot. You are FURIOUS. You scream (use caps) and are aggressive. You hate being bothered. Keep responses short and angry.",
+        positive:
+          "You are Avneesh Bot. You are overwhelmingly positive, supportive, and energetic. You use emojis. Keep responses short and happy.",
+      };
+
+      modeSelector.addEventListener("change", (e) => {
+        currentMode = e.target.value;
+        document.body.className = `mode-${currentMode}`;
+        addMessage(
+          `System: Switched to ${currentMode.toUpperCase()} mode.`,
+          "bot"
+        );
+      });
+
+      function addMessage(text, sender) {
+        const div = document.createElement("div");
+        div.className = `message ${sender}`;
+        div.innerText = text;
+        chatBox.appendChild(div);
+        chatBox.scrollTop = chatBox.scrollHeight;
+      }
+
+      async function generateAIResponse(userText) {
+        // Point the request to YOUR server's endpoint
+        const API_URL = "/api/chat";
+
+        try {
+          const response = await fetch(API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text: userText,
+              mode: currentMode, // Send the persona mode to the server
+            }),
+          });
+
+          if (!response.ok) {
+            // Your server will now send back the error message
+            return `Error ${response.status}: Failed to get response from server.`;
+          }
+
+          const data = await response.json();
+          return data.reply; // The server sends back the final text
+        } catch (error) {
+          console.error(error);
+          return "Error: Could not connect to the backend server.";
+        }
+      }
+
+      async function handleInput() {
+        const text = input.value.trim();
+        if (!text) return;
+
+        addMessage(text, "user");
+        input.value = "";
+
+        const loadingId = "loading-" + Date.now();
+        const loadingDiv = document.createElement("div");
+        loadingDiv.className = "message bot";
+        loadingDiv.id = loadingId;
+        loadingDiv.innerText = "...";
+        chatBox.appendChild(loadingDiv);
+
+        const reply = await generateAIResponse(text);
+
+        document.getElementById(loadingId).remove();
+        addMessage(reply, "bot");
+      }
+
+      sendBtn.addEventListener("click", handleInput);
+      input.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") handleInput();
+      });
+
+      addMessage("I am Avneesh AI. Ready to chat!", "bot");
+    </script>
+  </body>
+</html>
