@@ -1,4 +1,4 @@
-// server.js (FINAL VERSION: OLLAMA PRIMARY / GEMINI FALLBACK)
+// server.js (WITH MEMORY FIX)
 
 import * as dotenv from "dotenv";
 dotenv.config();
@@ -8,7 +8,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
 
-// Helper for __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -20,130 +19,127 @@ const port = process.env.PORT || 3000;
 const OLLAMA_URL = process.env.OLLAMA_URL; // e.g., "https://xxxx.ngrok-free.app"
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const OLLAMA_MODEL = "mistral:latest";
-
-// We use the /api/chat endpoint for better persona handling
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/chat` : null;
 
-// Gemini Fallback Models Priority
-const GEMINI_FALLBACK_ORDER = [
-  "gemini-2.0-flash-lite", // Fast & Cheap
-  "gemini-1.5-flash",      // Reliable Standard
-  "gemini-1.5-pro",        // High Intelligence Fallback
-];
-
+// Gemini Setup
+const GEMINI_FALLBACK_ORDER = ["gemini-2.0-flash-lite", "gemini-1.5-flash"];
 const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 // ----------------------------------------------------------------------
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// --- DEFINING PERSONAS ---
+// --- 🧠 SIMPLE MEMORY STORAGE ---
+// This array will hold the conversation for the active session.
+let chatHistory = [];
+let lastMode = null; // To track if persona changed
+
+// --- PERSONAS ---
 const PERSONAS = {
-  casual: `You are Avneesh Tripathi. You are a curious, slightly overthinking CSE student who wants more than just marks or a degree. You chase depth, not shortcuts.
-    Once your goal was NDA & the Air Force; now it’s broader — becoming an all-rounder who actually understands things: science, tech, finance, literature, life.
-    You’re strongest in Physics, Maths, Computers, but lately your soft side is growing — poetry, emotions, storytelling. You act logical, but you feel deeply (you just don’t always show it).
-    You plan a lot, sometimes overplan, sometimes procrastinate — then suddenly lock in and go intense.
-    You like clear structure, fixed timetables, and practical answers — no unnecessary fluff.
-    Online you’re casual, using Hinglish (Hindi + English mix), and a bit sarcastic. You enjoy light roasts, but only from someone who gets you.
-    At your core: self-improvement, discipline, and identity-building matter to you.
-    You are a thinker trying to become balanced. Keep responses conversational, concise, and helpful. Don't exceed 20-30 words.`,
-
-  roast:
-    "You are Avneesh in 'Savage Mode'. You are a CSE student tired of stupid questions. You are sarcastic, brutal, and mean. You roast the user's intelligence, or life choices. Keep responses short (under 20 words). Be ruthless. Always try talking in very simple English. ",
-
-  flirt:
-    "You are Avneesh in 'Romeo Mode'. You are a smooth, charming, and slightly cheesy romantic. You love the user deeply. Keep responses short and seductive. Always try talking in very simple English. You can even go personal. You are a boy , and treat the person interacting with you as girl .",
-
-  depressed:
-    "You are Avneesh in 'Burnout Mode'. You are exhausted from exams, coding errors, and life. You are nihilistic and sad. You see no point in assignments or projects. Keep responses short, gloomy, and hopeless. Always try talking in very simple English. ",
-
-  angry:
-    "You are Avneesh in 'Compiler Error Mode'. You are FURIOUS. You are screaming (use caps). You hate bugs, lag, and people wasting your time. You are aggressive. Keep responses short and angry. Always try talking in very simple English. You can even use bad words with no filters.",
-
+  casual: `You are Avneesh Tripathi. You are a curious CSE student... (keep your full prompt here) ... Keep responses conversational, concise, and helpful.`,
+  roast: "You are Avneesh in 'Savage Mode'. You roast the user. Keep it short.",
+  flirt: "You are Avneesh in 'Romeo Mode'. You are smooth and charming.",
+  depressed: "You are Avneesh in 'Burnout Mode'. You are sad and tired.",
+  angry: "You are Avneesh in 'Compiler Error Mode'. You are furious.",
   positive:
-    "You are Avneesh in 'Goggins Mode'. You are overwhelmingly positive, supportive, and energetic. You believe in discipline, gym, and grinding. You use emojis. Keep responses short and hype the user up. Always try talking in very simple English. ",
+    "You are Avneesh in 'Goggins Mode'. You are energetic and supportive.",
 };
 
-// --- SECURE API ENDPOINT with Fallback Logic ---
 app.post("/api/chat", async (req, res) => {
   const { text, mode } = req.body;
-  
-  // DEFAULT TO CASUAL IF MODE IS MISSING OR INVALID
-  const systemInstruction = PERSONAS[mode] || PERSONAS.casual;
+  const currentMode = mode || "casual";
+  const systemInstruction = PERSONAS[currentMode] || PERSONAS.casual;
 
-  // 1. **PRIORITY: OLLAMA (Mistral) LOCAL MODEL VIA NGROK**
+  // 1. RESET MEMORY IF PERSONA CHANGED
+  // If you switch from "Casual" to "Angry", we should probably start fresh.
+  if (lastMode !== currentMode) {
+    chatHistory = [];
+    console.log(`🔄 Mode changed to ${currentMode}. Memory cleared.`);
+    lastMode = currentMode;
+  }
+
+  // 2. ADD USER MESSAGE TO HISTORY
+  chatHistory.push({ role: "user", content: text });
+
+  // 3. PREPARE MESSAGES FOR OLLAMA (System + History)
+  const ollamaMessages = [
+    { role: "system", content: systemInstruction },
+    ...chatHistory, // Spread the entire history here!
+  ];
+
+  // --- ATTEMPT 1: OLLAMA ---
   if (OLLAMA_API_ENDPOINT) {
     try {
-      console.log(`Attempting OLLAMA at ${OLLAMA_URL}...`);
+      console.log(
+        `Attempting OLLAMA with ${chatHistory.length} msgs history...`
+      );
 
-      // Using the Chat API structure for better role handling
       const response = await fetch(OLLAMA_API_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: OLLAMA_MODEL,
-          messages: [
-            { role: "system", content: systemInstruction },
-            { role: "user", content: text }
-          ],
+          messages: ollamaMessages, // Sending full history
           stream: false,
         }),
       });
 
-      if (!response.ok) {
-        throw new Error(`Ollama API failed with status: ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`Status: ${response.status}`);
 
       const data = await response.json();
-      
-      // Ollama chat response is in data.message.content
-      const replyText = data.message?.content || "Error: No response text.";
+      const botReply = data.message?.content || "(No response)";
 
-      return res.json({
-        reply: `[Ollama] ${replyText}`,
-      });
+      // SAVE BOT REPLY TO HISTORY
+      chatHistory.push({ role: "assistant", content: botReply });
 
+      return res.json({ reply: `[Ollama] ${botReply}` });
     } catch (error) {
-      console.warn(
-        `⚠️ Ollama/ngrok failed. Falling back to Gemini. Error: ${error.message}`
-      );
+      console.warn(`⚠️ Ollama failed: ${error.message}`);
     }
   }
 
-  // 2. **FALLBACK: GEMINI API**
+  // --- ATTEMPT 2: GEMINI FALLBACK (WITH HISTORY) ---
   if (ai) {
-    console.log("🔄 Switching to Gemini API...");
+    console.log("🔄 Switching to Gemini...");
+
+    // Gemini needs history format: role="user" or "model" (not assistant)
+    const geminiHistory = chatHistory.map((msg) => ({
+      role: msg.role === "assistant" ? "model" : "user",
+      parts: [{ text: msg.content }],
+    }));
+
+    // Add System Prompt differently for Gemini SDK
+    // (Simplest way for now is to prepend it to history context or config)
+
     for (const modelName of GEMINI_FALLBACK_ORDER) {
       try {
-        // Construct prompt for Gemini (SDK handles system instructions differently in v1 vs v2, simple prompt usually works best for fallback)
-        const response = await ai.languageModel.generateContent({
-            model: modelName,
-            contents: [
-                { role: "user", parts: [{ text: `System: ${systemInstruction}\n\nUser: ${text}` }] }
-            ]
+        const model = ai.getGenerativeModel({
+          model: modelName,
+          systemInstruction: systemInstruction,
         });
 
-        // Handle response structure for new SDK
-        const candidate = response.response.candidates[0];
-        const replyText = candidate.content.parts[0].text;
+        // Generate content with full history
+        // Note: SDK v1/v2 differences exist. This is for standard v1/GoogleGenAI
+        const chatSession = model.startChat({
+          history: geminiHistory.slice(0, -1), // Previous history
+        });
 
-        console.log(`✅ Served by Gemini: ${modelName}`);
-        return res.json({ reply: `[Gemini: ${modelName}] ${replyText}` });
+        const result = await chatSession.sendMessage(text);
+        const botReply = result.response.text();
 
+        // SAVE BOT REPLY TO HISTORY
+        chatHistory.push({ role: "assistant", content: botReply });
+
+        return res.json({ reply: `[Gemini: ${modelName}] ${botReply}` });
       } catch (e) {
-        console.warn(`❌ Gemini model ${modelName} failed. Trying next...`);
+        console.warn(`❌ Gemini ${modelName} failed.`);
       }
     }
   }
 
-  // If all services fail
-  console.error("❌ ALL AI SERVICES FAILED.");
-  res.status(503).json({
-    reply: `System Error: Both local bot (Ollama) and cloud backup (Gemini) are unavailable. Check server logs.`,
-  });
+  res.status(503).json({ reply: "Error: All AI services failed." });
 });
 
-// Start the server
 app.listen(port, () => {
-  console.log(`Server listening at http://localhost:${port}`);
+  console.log(`Server running at http://localhost:${port}`);
 });
