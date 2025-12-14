@@ -6,7 +6,6 @@ dotenv.config();
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-// Import GoogleGenAI only once at the top
 import { GoogleGenAI } from "@google/genai";
 
 // Helper for __dirname in ESM
@@ -18,18 +17,20 @@ const port = process.env.PORT || 3000;
 
 // ----------------------------------------------------------------------
 // 👇 CONFIGURE API SETTINGS 👇
-const OLLAMA_URL = process.env.OLLAMA_URL;
+const OLLAMA_URL = process.env.OLLAMA_URL; // e.g., "https://xxxx.ngrok-free.app"
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const OLLAMA_MODEL = "mistral:latest";
 
-const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
+// We use the /api/chat endpoint for better persona handling
+const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/chat` : null;
 
-// Gemini Fallback Models
+// Gemini Fallback Models Priority
 const GEMINI_FALLBACK_ORDER = [
-  "gemini-2.5-flash-lite",
-  "gemini-2.5-flash",
-  "gemini-2.5-pro",
+  "gemini-2.0-flash-lite", // Fast & Cheap
+  "gemini-1.5-flash",      // Reliable Standard
+  "gemini-1.5-pro",        // High Intelligence Fallback
 ];
+
 const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 // ----------------------------------------------------------------------
 
@@ -66,20 +67,25 @@ const PERSONAS = {
 // --- SECURE API ENDPOINT with Fallback Logic ---
 app.post("/api/chat", async (req, res) => {
   const { text, mode } = req.body;
+  
   // DEFAULT TO CASUAL IF MODE IS MISSING OR INVALID
   const systemInstruction = PERSONAS[mode] || PERSONAS.casual;
 
   // 1. **PRIORITY: OLLAMA (Mistral) LOCAL MODEL VIA NGROK**
   if (OLLAMA_API_ENDPOINT) {
     try {
-      console.log(`Using OLLAMA at ${OLLAMA_URL}`);
+      console.log(`Attempting OLLAMA at ${OLLAMA_URL}...`);
 
+      // Using the Chat API structure for better role handling
       const response = await fetch(OLLAMA_API_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: OLLAMA_MODEL,
-          prompt: `${systemInstruction}\nUser said: "${text}"\nReply:`,
+          messages: [
+            { role: "system", content: systemInstruction },
+            { role: "user", content: text }
+          ],
           stream: false,
         }),
       });
@@ -89,46 +95,51 @@ app.post("/api/chat", async (req, res) => {
       }
 
       const data = await response.json();
+      
+      // Ollama chat response is in data.message.content
+      const replyText = data.message?.content || "Error: No response text.";
+
       return res.json({
-        reply: `[Ollama] ${data.response}`,
+        reply: `[Ollama] ${replyText}`,
       });
+
     } catch (error) {
       console.warn(
-        `Ollama/ngrok failed. Falling back to Gemini. Error: ${error.message}`
+        `⚠️ Ollama/ngrok failed. Falling back to Gemini. Error: ${error.message}`
       );
     }
   }
 
   // 2. **FALLBACK: GEMINI API**
   if (ai) {
-    try {
-      console.log("Falling back to Gemini API.");
-      for (const modelName of GEMINI_FALLBACK_ORDER) {
-        try {
-          const response = await ai.models.generateContent({
+    console.log("🔄 Switching to Gemini API...");
+    for (const modelName of GEMINI_FALLBACK_ORDER) {
+      try {
+        // Construct prompt for Gemini (SDK handles system instructions differently in v1 vs v2, simple prompt usually works best for fallback)
+        const response = await ai.languageModel.generateContent({
             model: modelName,
             contents: [
-              {
-                role: "user",
-                parts: [{ text: `${systemInstruction}\nUser said: "${text}"` }],
-              },
-            ],
-            config: { systemInstruction: systemInstruction },
-          });
+                { role: "user", parts: [{ text: `System: ${systemInstruction}\n\nUser: ${text}` }] }
+            ]
+        });
 
-          return res.json({ reply: `[Gemini: ${modelName}] ${response.text}` });
-        } catch (e) {
-          console.warn(`Gemini model ${modelName} failed. Trying next model.`);
-        }
+        // Handle response structure for new SDK
+        const candidate = response.response.candidates[0];
+        const replyText = candidate.content.parts[0].text;
+
+        console.log(`✅ Served by Gemini: ${modelName}`);
+        return res.json({ reply: `[Gemini: ${modelName}] ${replyText}` });
+
+      } catch (e) {
+        console.warn(`❌ Gemini model ${modelName} failed. Trying next...`);
       }
-    } catch (error) {
-      console.error("Fatal Error: Both Ollama and Gemini failed.", error);
     }
   }
 
   // If all services fail
+  console.error("❌ ALL AI SERVICES FAILED.");
   res.status(503).json({
-    reply: `AI service unavailable. Check OLLAMA_URL/ngrok and GEMINI_API_KEY.`,
+    reply: `System Error: Both local bot (Ollama) and cloud backup (Gemini) are unavailable. Check server logs.`,
   });
 });
 
