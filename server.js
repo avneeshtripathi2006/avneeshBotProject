@@ -1,4 +1,4 @@
-// server.js (VERIFIED & FIXED)
+// server.js (FINAL FIX)
 
 import * as dotenv from "dotenv";
 dotenv.config();
@@ -6,8 +6,8 @@ dotenv.config();
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-// FIX: Using the standard package name
-import { GoogleGenAI } from "@google/generative-ai"; 
+// ✅ FIXED IMPORT NAME
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,23 +17,21 @@ const port = process.env.PORT || 3000;
 
 // ----------------------------------------------------------------------
 // 👇 CONFIGURE API SETTINGS 👇
-const OLLAMA_URL = process.env.OLLAMA_URL; // e.g., "https://xxxx.ngrok-free.app"
+const OLLAMA_URL = process.env.OLLAMA_URL;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-// RECOMMENDATION: Use "mistral" or "llama3.1" if available for better logic
 const OLLAMA_MODEL = "mistral:latest"; 
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/chat` : null;
 
 // Gemini Setup
 const GEMINI_FALLBACK_ORDER = ["gemini-2.0-flash-lite", "gemini-1.5-flash"];
-const ai = GEMINI_API_KEY ? new GoogleGenAI(GEMINI_API_KEY) : null; // Fixed constructor usage
+// ✅ FIXED CLASS NAME HERE
+const ai = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 // ----------------------------------------------------------------------
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 // --- 🧠 SIMPLE MEMORY STORAGE ---
-// NOTE: This global variable works for single-user testing. 
-// For multi-user, you would need a Map() keyed by session IDs.
 let chatHistory = [];
 let lastMode = null; 
 
@@ -62,10 +60,10 @@ app.post("/api/chat", async (req, res) => {
   // 2. ADD USER MESSAGE TO HISTORY
   chatHistory.push({ role: "user", content: text });
 
-  // 3. PREPARE MESSAGES FOR OLLAMA (System + History)
+  // 3. PREPARE MESSAGES FOR OLLAMA
   const ollamaMessages = [
     { role: "system", content: systemInstruction },
-    ...chatHistory, // ✅ This sends the full context!
+    ...chatHistory, 
   ];
 
   // --- ATTEMPT 1: OLLAMA ---
@@ -88,7 +86,6 @@ app.post("/api/chat", async (req, res) => {
       const data = await response.json();
       const botReply = data.message?.content || "(No response)";
 
-      // ✅ SAVE BOT REPLY TO HISTORY
       chatHistory.push({ role: "assistant", content: botReply });
 
       return res.json({ reply: `[Ollama] ${botReply}` });
@@ -97,11 +94,10 @@ app.post("/api/chat", async (req, res) => {
     }
   }
 
-  // --- ATTEMPT 2: GEMINI FALLBACK (WITH HISTORY) ---
+  // --- ATTEMPT 2: GEMINI FALLBACK ---
   if (ai) {
     console.log("🔄 Switching to Gemini...");
 
-    // Convert history for Gemini format
     const geminiHistory = chatHistory.map((msg) => ({
       role: msg.role === "assistant" ? "model" : "user",
       parts: [{ text: msg.content }],
@@ -114,9 +110,6 @@ app.post("/api/chat", async (req, res) => {
           systemInstruction: systemInstruction,
         });
 
-        // The 'history' passed to startChat should NOT include the *current* new message,
-        // because we send that in .sendMessage().
-        // slice(0, -1) removes the last item (the user message we just added in Step 2).
         const chatSession = model.startChat({
           history: geminiHistory.slice(0, -1), 
         });
@@ -124,7 +117,6 @@ app.post("/api/chat", async (req, res) => {
         const result = await chatSession.sendMessage(text);
         const botReply = result.response.text();
 
-        // ✅ SAVE BOT REPLY TO HISTORY
         chatHistory.push({ role: "assistant", content: botReply });
 
         return res.json({ reply: `[Gemini: ${modelName}] ${botReply}` });
