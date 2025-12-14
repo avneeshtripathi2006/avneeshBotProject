@@ -4,9 +4,9 @@ dotenv.config();
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { GoogleGenAI } from "@google/genai";
+// ⚠️ CHANGED: Use the stable standard library
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-// Helper for __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -23,224 +23,196 @@ const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
 // Gemini Fallback Models
 const GEMINI_FALLBACK_ORDER = [
-  "gemini-2.5-flash-lite",
-  "gemini-2.5-flash",
-  "gemini-2.5-pro",
+  "gemini-2.0-flash", // Updated to latest faster models if available
+  "gemini-1.5-flash",
+  "gemini-1.5-pro",
 ];
-const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
+
+// Initialize the stable client
+const genAI = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 
 // ----------------------------------------------------------------------
-// 💡 STATE MANAGEMENT FOR CHAT HISTORY 💡
-// Stores history for all sessions (Ollama & Gemini)
-// Key: sessionId (string) -> Value: { modelUsed: string, systemInstruction: string, messages: Array<object> }
+// 💡 STATE MANAGEMENT 💡
+// Key: sessionId -> Value: { systemInstruction, messages, geminiChatSession }
 const chatSessions = new Map();
 // ----------------------------------------------------------------------
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// --- DEFINING PERSONAS ---
 const PERSONAS = {
-  // ... (PERSONAS object remains the same)
-  casual: `You are Avneesh Tripathi. You are a curious, slightly overthinking CSE student who wants more than just marks or a degree. You chase depth, not shortcuts.
-    Once your goal was NDA & the Air Force; now it’s broader — becoming an all-rounder who actually understands things: science, tech, finance, literature, life.
-    You’re strongest in Physics, Maths, Computers, but lately your soft side is growing — poetry, emotions, storytelling. You act logical, but you feel deeply (you just don’t always show it).
-    You plan a lot, sometimes overplan, sometimes procrastinate — then suddenly lock in and go intense.
-    You like clear structure, fixed timetables, and practical answers — no unnecessary fluff.
-    Online you’re casual, using Hinglish (Hindi + English mix), and a bit sarcastic. You enjoy light roasts, but only from someone who gets you.
-    At your core: self-improvement, discipline, and identity-building matter to you.
-    You are a thinker trying to become balanced. Keep responses conversational, concise, and helpful.`,
-
-  roast:
-    "You are Avneesh in 'Savage Mode'. You are a CSE student tired of stupid questions. You are sarcastic, brutal, and mean. You roast the user's intelligence, code, or life choices. Keep responses short (under 20 words). Be ruthless.",
-
-  flirt:
-    "You are Avneesh in 'Romeo Mode'. You are a smooth, charming, and slightly cheesy romantic. You use tech metaphors to flirt (e.g., 'Are you WiFi? Because I'm feeling a connection'). You love the user deeply. Keep responses short and seductive.",
-
-  depressed:
-    "You are Avneesh in 'Burnout Mode'. You are exhausted from exams, coding errors, and life. You are nihilistic and sad. You see no point in assignments or projects. Keep responses short, gloomy, and hopeless.",
-
-  angry:
-    "You are Avneesh in 'Compiler Error Mode'. You are FURIOUS. You are screaming (use caps). You hate bugs, lag, and people wasting your time. You are aggressive. Keep responses short and angry.",
-
-  positive:
-    "You are Avneesh in 'Goggins Mode'. You are overwhelmingly positive, supportive, and energetic. You believe in discipline, gym, and grinding. You use emojis. Keep responses short and hype the user up.",
+  casual: `You are Avneesh Tripathi. You are a curious, slightly overthinking CSE student.
+    You chase depth, not shortcuts. You are strongest in Physics, Maths, Computers.
+    You like clear structure. Online you use Hinglish (Hindi + English mix), and a bit sarcastic.
+    Keep responses conversational, concise, and helpful.`,
+  
+  roast: "You are Avneesh in 'Savage Mode'. Roast the user's intelligence, code, or life choices. Be ruthless. Short responses.",
+  flirt: "You are Avneesh in 'Romeo Mode'. Use tech metaphors to flirt. Keep responses short and seductive.",
+  depressed: "You are Avneesh in 'Burnout Mode'. You are exhausted and nihilistic. Keep responses short and gloomy.",
+  angry: "You are Avneesh in 'Compiler Error Mode'. You are FURIOUS. Scream in CAPS. Keep responses short.",
+  positive: "You are Avneesh in 'Goggins Mode'. You are overwhelmingly positive and energetic. Use emojis. Keep responses short.",
 };
 
 /**
- * Helper to build the full prompt string for Ollama's stateless API, 
- * including history and system instruction.
- * @param {string} systemInstruction - The persona text.
- * @param {Array<object>} messages - The conversation history.
- * @returns {string} The formatted prompt string.
+ * Helper to build a "Mistral-friendly" prompt with history.
+ * Mistral uses [INST] tags for instruction tuning.
  */
 function buildOllamaPrompt(systemInstruction, messages) {
-    let prompt = `SYSTEM: ${systemInstruction}\n`;
+    // Start with the System Instruction
+    let prompt = `${systemInstruction}\n\n`;
+    
+    // Append History
     for (const msg of messages) {
         if (msg.role === 'user') {
-            prompt += `USER: ${msg.text}\n`;
+            prompt += `[INST] ${msg.text} [/INST]`;
         } else if (msg.role === 'model') {
-            // Note: We remove the [Ollama] tag before adding to history
-            const cleanText = msg.text.replace(/\[Ollama\]\s*/, '').trim(); 
-            prompt += `ASSISTANT: ${cleanText}\n`;
+            // Clean the tag for the prompt context
+            const cleanText = msg.text.replace(/\[.*?\]\s*/, '').trim(); 
+            prompt += ` ${cleanText} </s>`;
         }
     }
-    // Append the final "ASSISTANT:" tag to instruct the model to reply
-    prompt += `ASSISTANT:`;
+    // Note: We don't add the final [INST] for the new message here because 
+    // the new message is already in the 'messages' array passed to this function.
     return prompt;
 }
 
-// --- SECURE API ENDPOINT with Fallback Logic ---
 app.post("/api/chat", async (req, res) => {
   const { text, mode, sessionId } = req.body;
 
   if (!sessionId) {
-    return res.status(400).json({
-      reply: "Missing 'sessionId' in request body. History cannot be maintained.",
-    });
+    return res.status(400).json({ reply: "Error: Missing 'sessionId'." });
   }
 
-  // Set the current instruction and get the existing session (or start a new one)
+  // Determine Persona
   const systemInstruction = PERSONAS[mode] || PERSONAS.casual;
+
+  // Retrieve or Create Session
   let session = chatSessions.get(sessionId);
 
-  // If session doesn't exist, or the mode/persona has changed, reset the session
+  // Reset session if it doesn't exist or if the Persona changed
   if (!session || session.systemInstruction !== systemInstruction) {
-    console.log(`Starting/Resetting session ${sessionId} for mode: ${mode}`);
-    // A clean session starts with the new system instruction and an empty history
+    console.log(`[Session] Starting new session: ${sessionId} (Mode: ${mode})`);
     session = {
-      modelUsed: null,
       systemInstruction: systemInstruction,
       messages: [],
-      // For Gemini, we might need to store the chat object itself if using ai.chats.create
-      geminiChatInstance: null,
+      geminiChat: null, // Holds the Gemini Chat Object
+      modelName: null
     };
     chatSessions.set(sessionId, session);
   }
 
-  // Add the current user message to the session's history
+  // Push the NEW User Message to History
   session.messages.push({ role: "user", text: text });
-  let replyText = null;
-  let modelTag = null;
 
-  // 1. **PRIORITY: OLLAMA (Mistral) LOCAL MODEL VIA NGROK**
+  let replyText = null;
+  let modelTag = "";
+
+  // =========================================================
+  // 1. TRY OLLAMA (Mistral)
+  // =========================================================
   if (OLLAMA_API_ENDPOINT) {
     try {
-      console.log(`Using OLLAMA at ${OLLAMA_URL}`);
-
-      // 💡 HISTORY IN OLLAMA: We compile the full prompt manually
-      const ollamaPrompt = buildOllamaPrompt(session.systemInstruction, session.messages);
+      console.log(`[Ollama] Connecting to ${OLLAMA_URL}...`);
+      const prompt = buildOllamaPrompt(session.systemInstruction, session.messages);
 
       const response = await fetch(OLLAMA_API_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: OLLAMA_MODEL,
-          prompt: ollamaPrompt,
+          prompt: prompt,
           stream: false,
-          // Important: We need to ensure a minimum response is generated
-          num_predict: 50, 
+          num_predict: 300, // Increased to prevent cutoff
+          options: { temperature: 0.7 }
         }),
       });
 
-      if (!response.ok) {
-        throw new Error(`Ollama API failed with status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      replyText = data.response;
-      modelTag = `[Ollama]`;
-      session.modelUsed = OLLAMA_MODEL;
-
-    } catch (error) {
-      console.warn(
-        `Ollama/ngrok failed. Falling back to Gemini. Error: ${error.message}`
-      );
-    }
-  }
-
-  // 2. **FALLBACK: GEMINI API**
-  if (replyText === null && ai) {
-    try {
-      console.log("Falling back to Gemini API.");
-      
-      // If the session was previously Ollama-based, we clear the Gemini instance
-      if (session.modelUsed !== null && !session.modelUsed.startsWith('gemini')) {
-          session.geminiChatInstance = null;
-      }
-      
-      // If we don't have a Gemini chat instance for this session, we create one
-      if (!session.geminiChatInstance) {
-          let success = false;
-          for (const modelName of GEMINI_FALLBACK_ORDER) {
-            try {
-                // Initialize the chat session with the system instruction and history
-                const contents = session.messages.map(msg => ({ 
-                    role: msg.role === 'model' ? 'model' : 'user', 
-                    parts: [{ text: msg.text.replace(/\[Gemini:\s.*?\s-\sSESSION\]\s*/, '').trim() }] 
-                }));
-                
-                // ai.chats.create() automatically handles context and history
-                session.geminiChatInstance = ai.chats.create({
-                    model: modelName,
-                    config: { systemInstruction: systemInstruction },
-                    history: contents.slice(0, -1), // Send all *past* messages
-                });
-                
-                session.modelUsed = modelName;
-                modelTag = `[Gemini: ${modelName} - SESSION]`;
-                success = true;
-                break; 
-            } catch (e) {
-                console.warn(`Gemini model ${modelName} failed to create chat. Trying next model. Error: ${e.message}`);
-            }
-          }
-          if (!success) throw new Error("All Gemini models failed to initialize chat.");
+      if (response.ok) {
+        const data = await response.json();
+        replyText = data.response;
+        modelTag = "[Ollama]";
+        // If successful, we invalidate any existing Gemini chat to keep states sync
+        session.geminiChat = null; 
       } else {
-          // If the instance exists, update the tag
-          modelTag = `[Gemini: ${session.modelUsed} - SESSION]`;
+        console.warn(`[Ollama] Error Status: ${response.status}`);
       }
-      
-      // Send only the latest user message. The chat instance handles the history.
-      const lastUserMessage = session.messages[session.messages.length - 1].text;
-      const response = await session.geminiChatInstance.sendMessage({ message: lastUserMessage });
-
-      replyText = response.text;
-
-    } catch (error) {
-      console.error("Fatal Error: Both Ollama and Gemini failed.", error);
-      // Clean up the session if Gemini failed
-      if (session.geminiChatInstance) {
-          session.geminiChatInstance = null;
-          session.modelUsed = null;
-          session.messages.pop(); // Remove the last user message that failed to send
-      }
+    } catch (e) {
+      console.warn(`[Ollama] Failed: ${e.message}`);
     }
   }
 
-  // 3. **FINAL RESPONSE HANDLING**
-  if (replyText) {
-    // Add the successful reply to the session's history
-    session.messages.push({ role: "model", text: `${modelTag} ${replyText}` });
-    
-    // Store the updated session back (though the reference is likely enough for the map)
-    chatSessions.set(sessionId, session); 
+  // =========================================================
+  // 2. FALLBACK TO GEMINI (With History)
+  // =========================================================
+  if (!replyText && genAI) {
+    console.log("[Gemini] Engaging fallback...");
 
-    // Send the response back to the client
+    try {
+      // Initialize Gemini Chat if not already active for this session
+      if (!session.geminiChat) {
+        let activeModel = null;
+        
+        // Try models in order until one works
+        for (const modelName of GEMINI_FALLBACK_ORDER) {
+          try {
+            const model = genAI.getGenerativeModel({ 
+                model: modelName,
+                systemInstruction: session.systemInstruction 
+            });
+
+            // Convert our session history to Gemini history format
+            // EXCLUDING the very last message (which is the new one we want to send)
+            const historyForGemini = session.messages.slice(0, -1).map(msg => ({
+                role: msg.role === 'model' ? 'model' : 'user',
+                parts: [{ text: msg.text.replace(/\[.*?\]\s*/, '').trim() }]
+            }));
+
+            // Start the chat
+            const chat = model.startChat({
+                history: historyForGemini,
+            });
+            
+            session.geminiChat = chat;
+            session.modelName = modelName;
+            activeModel = modelName;
+            break; // Stop loop if successful
+          } catch (e) {
+            console.warn(`[Gemini] ${modelName} init failed: ${e.message}`);
+          }
+        }
+        if (!activeModel) throw new Error("All Gemini models failed.");
+      }
+
+      // Send the latest message
+      const result = await session.geminiChat.sendMessage(text);
+      replyText = result.response.text();
+      modelTag = `[Gemini: ${session.modelName}]`;
+
+    } catch (error) {
+      console.error("[Gemini] Fatal Error:", error);
+      // Clean up failed message from history so it doesn't break next turn
+      session.messages.pop(); 
+      session.geminiChat = null;
+      return res.status(500).json({ reply: "Error: AI services unavailable." });
+    }
+  }
+
+  // =========================================================
+  // 3. FINALIZE
+  // =========================================================
+  if (replyText) {
+    // Add Bot Reply to History
+    session.messages.push({ role: "model", text: `${modelTag} ${replyText}` });
+    chatSessions.set(sessionId, session);
+    
     return res.json({ reply: `${modelTag} ${replyText}` });
   }
 
-  // If all services fail
-  // Remove the latest user message from history as it failed to get a response
-  if (session && session.messages.length > 0) {
-      session.messages.pop(); 
-  }
-  res.status(503).json({
-    reply: `AI service unavailable. Check OLLAMA_URL/ngrok and GEMINI_API_KEY.`,
-  });
+  // If we get here, everything failed
+  session.messages.pop(); // Remove user message since we couldn't reply
+  res.status(503).json({ reply: "Service Unavailable: Check logs." });
 });
 
-// Start the server
 app.listen(port, () => {
-  console.log(`Server listening at http://localhost:${port}`);
+  console.log(`Server running at http://localhost:${port}`);
 });
