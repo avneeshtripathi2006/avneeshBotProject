@@ -1,4 +1,4 @@
-// server.js (FINAL VERSION: OLLAMA PRIMARY / GEMINI FALLBACK)
+// server.js (UPDATED WITH CONTEXT/MEMORY)
 
 import * as dotenv from "dotenv";
 dotenv.config();
@@ -6,10 +6,8 @@ dotenv.config();
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-// Import GoogleGenAI only once at the top
 import { GoogleGenAI } from "@google/genai";
 
-// Helper for __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -20,7 +18,7 @@ const port = process.env.PORT || 3000;
 // 👇 CONFIGURE API SETTINGS 👇
 const OLLAMA_URL = process.env.OLLAMA_URL;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const OLLAMA_MODEL = "mistral:latest";
+const OLLAMA_MODEL = "llama3.1:latest"; // Ensure this matches your downloaded model
 
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
@@ -36,50 +34,73 @@ const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
-// --- DEFINING PERSONAS ---
 const PERSONAS = {
-  casual: `You are Avneesh Tripathi. You are a curious, slightly overthinking CSE student who wants more than just marks or a degree. You chase depth, not shortcuts.
-    Once your goal was NDA & the Air Force; now it’s broader — becoming an all-rounder who actually understands things: science, tech, finance, literature, life.
-    You’re strongest in Physics, Maths, Computers, but lately your soft side is growing — poetry, emotions, storytelling. You act logical, but you feel deeply (you just don’t always show it).
-    You plan a lot, sometimes overplan, sometimes procrastinate — then suddenly lock in and go intense.
-    You like clear structure, fixed timetables, and practical answers — no unnecessary fluff.
-    Online you’re casual, using Hinglish (Hindi + English mix), and a bit sarcastic. You enjoy light roasts, but only from someone who gets you.
-    At your core: self-improvement, discipline, and identity-building matter to you.
-    You are a thinker trying to become balanced. Keep responses conversational, concise, and helpful.`,
-
+  casual: `You are Avneesh Tripathi. You are a curious, slightly overthinking CSE student. Keep responses conversational, concise, and helpful. You try talking in Hindi + Simple English..`,
   roast:
-    "You are Avneesh in 'Savage Mode'. You are a CSE student tired of stupid questions. You are sarcastic, brutal, and mean. You roast the user's intelligence, code, or life choices. Keep responses short (under 20 words). Be ruthless.",
-
+    "You are Avneesh in 'Savage Mode'. You are sarcastic, brutal, and mean. You also use offensive words to roast people. You try talking in Hindi + Simple English.",
   flirt:
-    "You are Avneesh in 'Romeo Mode'. You are a smooth, charming, and slightly cheesy romantic. You use tech metaphors to flirt (e.g., 'Are you WiFi? Because I'm feeling a connection'). You love the user deeply. Keep responses short and seductive.",
-
+    "You are Avneesh in 'Flirty Mode'. You are smooth, charming, and slightly cheesy.Treat user as a girl you want to marry and have physical relations . Don't hesitate to say anything about her , go personal. You try talking in Hindi + Simple English.",
   depressed:
-    "You are Avneesh in 'Burnout Mode'. You are exhausted from exams, coding errors, and life. You are nihilistic and sad. You see no point in assignments or projects. Keep responses short, gloomy, and hopeless.",
-
-  angry:
-    "You are Avneesh in 'Compiler Error Mode'. You are FURIOUS. You are screaming (use caps). You hate bugs, lag, and people wasting your time. You are aggressive. Keep responses short and angry.",
-
+    "You are Avneesh in 'Burnout Mode'. You are exhausted and nihilistic...",
+  angry: "You are Avneesh in 'Very Angry Mode'. You are FURIOUS. You also use offensive words to user. You try talking in Hindi + Simple English..",
   positive:
-    "You are Avneesh in 'Goggins Mode'. You are overwhelmingly positive, supportive, and energetic. You believe in discipline, gym, and grinding. You use emojis. Keep responses short and hype the user up.",
+    "You are Avneesh in 'Goggins Mode'. You are overwhelmingly positive...",
 };
 
-// --- SECURE API ENDPOINT with Fallback Logic ---
+// --- SECURE API ENDPOINT with Context & Fallback ---
 app.post("/api/chat", async (req, res) => {
-  const { text, mode } = req.body;
-  // DEFAULT TO CASUAL IF MODE IS MISSING OR INVALID
+  // 👇 NEW: We now extract 'history' from the request body
+  const { text, mode, history } = req.body;
+
   const systemInstruction = PERSONAS[mode] || PERSONAS.casual;
 
-  // 1. **PRIORITY: OLLAMA (Mistral) LOCAL MODEL VIA NGROK**
+  // ---------------------------------------------------------
+  // 1. PREPARE OLLAMA PROMPT (String Construction)
+  // ---------------------------------------------------------
+  // We build a single large string containing the System Prompt + History + Current Message
+  let ollamaPrompt = `${systemInstruction}\n\n`;
+
+  // If history exists, append it to the prompt
+  if (history && Array.isArray(history)) {
+    history.forEach((msg) => {
+      const roleName = msg.role === "user" ? "User" : "Avneesh";
+      ollamaPrompt += `${roleName}: "${msg.text}"\n`;
+    });
+  }
+  // Add the current user message
+  ollamaPrompt += `User: "${text}"\nAvneesh:`;
+
+  // ---------------------------------------------------------
+  // 2. PREPARE GEMINI CONTEXT (Structured Array)
+  // ---------------------------------------------------------
+  // Gemini needs a specific array format: { role: 'user'|'model', parts: [{ text: ... }] }
+  let geminiHistory = [];
+
+  if (history && Array.isArray(history)) {
+    geminiHistory = history.map((msg) => ({
+      role: msg.role === "user" ? "user" : "model",
+      parts: [{ text: msg.text }],
+    }));
+  }
+
+  // Add the current message to the Gemini history array
+  geminiHistory.push({ role: "user", parts: [{ text: text }] });
+
+  // ---------------------------------------------------------
+  // EXECUTION LOGIC
+  // ---------------------------------------------------------
+
+  // 1. **PRIORITY: OLLAMA LOCAL MODEL**
   if (OLLAMA_API_ENDPOINT) {
     try {
-      console.log(`Using OLLAMA at ${OLLAMA_URL}`);
+      console.log(`Using OLLAMA with Context...`);
 
       const response = await fetch(OLLAMA_API_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: OLLAMA_MODEL,
-          prompt: `${systemInstruction}\nUser said: "${text}"\nReply:`,
+          prompt: ollamaPrompt, // Use the prompt with history included
           stream: false,
         }),
       });
@@ -102,17 +123,12 @@ app.post("/api/chat", async (req, res) => {
   // 2. **FALLBACK: GEMINI API**
   if (ai) {
     try {
-      console.log("Falling back to Gemini API.");
+      console.log("Falling back to Gemini API with Context.");
       for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
           const response = await ai.models.generateContent({
             model: modelName,
-            contents: [
-              {
-                role: "user",
-                parts: [{ text: `${systemInstruction}\nUser said: "${text}"` }],
-              },
-            ],
+            contents: geminiHistory, // Pass the full history array
             config: { systemInstruction: systemInstruction },
           });
 
@@ -126,13 +142,11 @@ app.post("/api/chat", async (req, res) => {
     }
   }
 
-  // If all services fail
   res.status(503).json({
     reply: `AI service unavailable. Check OLLAMA_URL/ngrok and GEMINI_API_KEY.`,
   });
 });
 
-// Start the server
 app.listen(port, () => {
   console.log(`Server listening at http://localhost:${port}`);
 });
