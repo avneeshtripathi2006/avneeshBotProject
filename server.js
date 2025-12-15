@@ -42,34 +42,49 @@ const PERSONAS = {
     "You are Avneesh in 'Flirty Mode'. You are smooth, charming, and slightly cheesy.Treat user as a girl you want to marry and give indirect hints. Don't hesitate to say anything about her , go personal. You try talking in Hindi + Simple English.",
   depressed:
     "You are Avneesh in 'Burnout Mode'. You are exhausted and nihilistic. You try talking in Hindi + Simple English.",
-  angry: "You are Avneesh in 'Very Angry Mode'. You are FURIOUS. You try talking in Hindi + Simple English.",
+  angry:
+    "You are Avneesh in 'Very Angry Mode'. You are FURIOUS. You try talking in Hindi + Simple English.",
   positive:
     "You are Avneesh in 'Goggins Mode'. You are overwhelmingly positive. You try talking in Hindi + Simple English.",
 };
 
+// ... existing imports and app setup ...
+
 // --- SECURE API ENDPOINT with Context & Fallback ---
 app.post("/api/chat", async (req, res) => {
-  // 👇 NEW: We now extract 'history' from the request body
   const { text, mode, history } = req.body;
-
   const systemInstruction = PERSONAS[mode] || PERSONAS.casual;
 
   // ---------------------------------------------------------
-  // 1. PREPARE OLLAMA PROMPT (String Construction)
+  // 1. PREPARE OLLAMA PROMPT (Using Llama 3.1 Template)
   // ---------------------------------------------------------
-  // We build a single large string containing the System Prompt + History + Current Message
-  let ollamaPrompt = `${systemInstruction}\n\n`;
+  let ollamaPrompt = "<|begin_of_text|>";
 
-  // If history exists, append it to the prompt
+  // Add System Instruction
+  ollamaPrompt += `<|start_header_id|>system<|end_header_id|>\n${systemInstruction}<|eot_id|>\n`;
+
+  // Add Conversation History
   if (history && Array.isArray(history)) {
     history.forEach((msg) => {
-      const roleName = msg.role === "user" ? "User" : "Avneesh";
-      ollamaPrompt += `${roleName}: "${msg.text}"\n`;
+      const role = msg.role === "user" ? "user" : "assistant"; // Use 'assistant' for model role
+      ollamaPrompt += `<|start_header_id|>${role}<|end_header_id|>\n${msg.text}<|eot_id|>\n`;
     });
   }
-  // Add the current user message
-  ollamaPrompt += `User: "${text}"\nAvneesh:`;
 
+  // Add Current User Message and initiate the Assistant's turn
+  ollamaPrompt += `<|start_header_id|>user<|end_header_id|>\n${text}<|eot_id|>\n`;
+  ollamaPrompt += `<|start_header_id|>assistant<|end_header_id|>\n`; // Model should start generating here
+
+  // ---------------------------------------------------------
+  // 2. PREPARE GEMINI CONTEXT (No change needed)
+  // ... (rest of the Gemini logic) ...
+
+  // ---------------------------------------------------------
+  // EXECUTION LOGIC
+  // ---------------------------------------------------------
+  // ... (rest of the Ollama and Gemini execution logic remains the same) ...
+
+  // ... existing app.listen ...
   // ---------------------------------------------------------
   // 2. PREPARE GEMINI CONTEXT (Structured Array)
   // ---------------------------------------------------------
