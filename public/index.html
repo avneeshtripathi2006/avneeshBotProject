@@ -175,118 +175,37 @@
       }
 
       /* --- THEMES --- */
-      /* Casual (Default) - Balanced Slate/Blue */
-      body.mode-casual {
-        background: #1e2124;
-      }
-      .mode-casual .bot,
-      .mode-casual button {
-        background: #5865f2;
-        color: white;
-      }
-      .mode-casual .mode-badge {
-        background-color: #5865f2;
-      }
+      body.mode-casual { background: #1e2124; }
+      .mode-casual .bot, .mode-casual button { background: #5865f2; color: white; }
+      .mode-casual .mode-badge { background-color: #5865f2; }
 
-      /* Roast - Dark Red/Brown */
-      body.mode-roast {
-        background: #281919;
-      }
-      .mode-roast .bot,
-      .mode-roast button {
-        background: #ff5722;
-        color: white;
-      }
-      .mode-roast .mode-badge {
-        background-color: #ff5722;
-      }
+      body.mode-roast { background: #281919; }
+      .mode-roast .bot, .mode-roast button { background: #ff5722; color: white; }
+      .mode-roast .mode-badge { background-color: #ff5722; }
 
-      /* Flirt - Purple/Pink */
-      body.mode-flirt {
-        background: #2e1a2e;
-      }
-      .mode-flirt .bot,
-      .mode-flirt button {
-        background: #e91e63;
-        color: white;
-      }
-      .mode-flirt .mode-badge {
-        background-color: #e91e63;
-      }
+      body.mode-flirt { background: #2e1a2e; }
+      .mode-flirt .bot, .mode-flirt button { background: #e91e63; color: white; }
+      .mode-flirt .mode-badge { background-color: #e91e63; }
 
-      /* Depressed - Desaturated Blue */
-      body.mode-depressed {
-        background: #1a232f;
-      }
-      .mode-depressed .bot,
-      .mode-depressed button {
-        background: #607d8b;
-        color: white;
-      }
-      .mode-depressed .mode-badge {
-        background-color: #607d8b;
-      }
+      body.mode-depressed { background: #1a232f; }
+      .mode-depressed .bot, .mode-depressed button { background: #607d8b; color: white; }
+      .mode-depressed .mode-badge { background-color: #607d8b; }
 
-      /* Angry - Vivid Red */
-      body.mode-angry {
-        background: #3c1e1e;
-      }
-      .mode-angry .bot,
-      .mode-angry button {
-        background: #f44336;
-        color: white;
-      }
-      .mode-angry .mode-badge {
-        background-color: #f44336;
-      }
+      body.mode-angry { background: #3c1e1e; }
+      .mode-angry .bot, .mode-angry button { background: #f44336; color: white; }
+      .mode-angry .mode-badge { background-color: #f44336; }
 
-      /* Positive - Green */
-      body.mode-positive {
-        background: #1e3a1e;
-      }
-      .mode-positive .bot,
-      .mode-positive button {
-        background: #4caf50;
-        color: white;
-      }
-      .mode-positive .mode-badge {
-        background-color: #4caf50;
-      }
+      body.mode-positive { background: #1e3a1e; }
+      .mode-positive .bot, .mode-positive button { background: #4caf50; color: white; }
+      .mode-positive .mode-badge { background-color: #4caf50; }
 
-      /* ================================================================= */
-      /* 📱 MOBILE OPTIMIZATION */
-      /* ================================================================= */
+      /* --- MOBILE --- */
       @media (max-width: 600px) {
-        body {
-          height: 100dvh;
-        }
-        .container {
-          width: 100%;
-          height: 100dvh;
-          max-width: none;
-          border-radius: 0;
-          box-shadow: none;
-        }
-        #chat-box {
-          padding: 15px;
-        }
-        .message {
-          font-size: 0.95rem;
-        }
-        #input-area {
-          padding: 10px 15px;
-        }
-        input {
-          padding: 12px 15px;
-          font-size: 0.95rem;
-        }
-        button {
-          padding: 12px 18px;
-          font-size: 0.95rem;
-        }
-        .header h2 {
-          font-size: 1.5rem;
-        }
+        body { height: 100dvh; }
+        .container { width: 100%; height: 100dvh; max-width: none; border-radius: 0; box-shadow: none; }
+        #chat-box { padding: 15px; }
+        .message { font-size: 0.95rem; }
+        #input-area { padding: 10px 15px; }
       }
     </style>
   </head>
@@ -320,23 +239,18 @@
     </div>
 
     <script type="module">
-      // ... existing consts and let declarations ...
-
       const chatBox = document.getElementById("chat-box");
       const input = document.getElementById("user-input");
       const modeSelector = document.getElementById("mode-selector");
       const sendBtn = document.getElementById("send-btn");
       const modeDisplay = document.getElementById("current-mode-display");
 
-      // Default is now casual
       let currentMode = "casual";
-
-      // 👇 NEW: Array to store conversation history
       let chatHistory = [];
-
-      // 👇 NEW: Generate a unique ID for the current session (UUID v4 is ideal, but for simplicity, we use a large timestamp)
-      let sessionId =
-        Date.now().toString(36) + Math.random().toString(36).substring(2);
+      
+      // 👇 GENERATE UNIQUE SESSION ID
+      // This ID is generated once per page load.
+      const sessionId = "sess-" + Date.now().toString(36) + Math.random().toString(36).substring(2);
 
       const MODE_LABELS = {
         casual: "😎 CASUAL MODE",
@@ -347,32 +261,11 @@
         positive: "✨ MOTIVATED MODE",
       };
 
-      // ... existing MODE_LABELS ...
-
       modeSelector.addEventListener("change", (e) => {
         currentMode = e.target.value;
         document.body.className = `mode-${currentMode}`;
         modeDisplay.innerText = MODE_LABELS[currentMode];
-
-        // Optional: You might want to clear history on mode switch to avoid confusion
-        // chatHistory = [];
-        // chatBox.innerHTML = '';
-
-        addMessage(
-          `System: Switched to ${currentMode.toUpperCase()} mode.`,
-          "bot"
-        );
-        // Optional: Reset session ID on mode change to start a new chat history record
-        // sessionId = Date.now().toString(36) + Math.random().toString(36).substring(2);
-
-        // Optional: Log the switch itself (if desired)
-        saveChatRecord(
-          sessionId,
-          "system",
-          `Mode changed to ${currentMode}`,
-          currentMode,
-          "SYSTEM"
-        );
+        addMessage(`System: Switched to ${currentMode.toUpperCase()} mode.`, "bot");
       });
 
       function addMessage(text, sender, isLoading = false) {
@@ -393,7 +286,7 @@
               text: userText,
               mode: currentMode,
               history: chatHistory,
-              sessionId: sessionId, // 👈 SEND SESSION ID TO SERVER
+              sessionId: sessionId, // 👈 SEND SESSION ID
             }),
           });
 
@@ -413,16 +306,9 @@
         const text = input.value.trim();
         if (!text) return;
 
-        // 1. Show User Message on UI
         addMessage(text, "user");
         input.value = "";
         sendBtn.disabled = true;
-
-        // 2. Add User Message to History (for the NEXT turn)
-        // Note: We don't send this *current* message in 'history' array for this request,
-        // because the backend handles the current message separately.
-        // We update the history AFTER getting the response usually, or right here.
-        // However, standard practice: History = Past messages. Current = New prompt.
 
         const loadingId = "loading-" + Date.now();
         addMessage("", "bot", true);
@@ -437,8 +323,6 @@
           addMessage(reply, "bot");
         }
 
-        // 3. Update History with THIS Interaction
-        // We push both the user's prompt and the bot's reply now.
         chatHistory.push({ role: "user", text: text });
         chatHistory.push({ role: "model", text: reply });
 
@@ -450,7 +334,6 @@
         if (e.key === "Enter") handleInput();
       });
 
-      // Init logic
       document.body.className = `mode-${currentMode}`;
       modeDisplay.innerText = MODE_LABELS[currentMode];
       addMessage(
