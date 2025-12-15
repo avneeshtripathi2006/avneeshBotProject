@@ -320,6 +320,8 @@
     </div>
 
     <script type="module">
+      // ... existing consts and let declarations ...
+
       const chatBox = document.getElementById("chat-box");
       const input = document.getElementById("user-input");
       const modeSelector = document.getElementById("mode-selector");
@@ -332,6 +334,10 @@
       // 👇 NEW: Array to store conversation history
       let chatHistory = [];
 
+      // 👇 NEW: Generate a unique ID for the current session (UUID v4 is ideal, but for simplicity, we use a large timestamp)
+      let sessionId =
+        Date.now().toString(36) + Math.random().toString(36).substring(2);
+
       const MODE_LABELS = {
         casual: "😎 CASUAL MODE",
         roast: "🔥 ROAST MODE",
@@ -340,6 +346,8 @@
         angry: "😡 RAGE MODE",
         positive: "✨ MOTIVATED MODE",
       };
+
+      // ... existing MODE_LABELS ...
 
       modeSelector.addEventListener("change", (e) => {
         currentMode = e.target.value;
@@ -353,6 +361,17 @@
         addMessage(
           `System: Switched to ${currentMode.toUpperCase()} mode.`,
           "bot"
+        );
+        // Optional: Reset session ID on mode change to start a new chat history record
+        // sessionId = Date.now().toString(36) + Math.random().toString(36).substring(2);
+
+        // Optional: Log the switch itself (if desired)
+        saveChatRecord(
+          sessionId,
+          "system",
+          `Mode changed to ${currentMode}`,
+          currentMode,
+          "SYSTEM"
         );
       });
 
@@ -373,7 +392,8 @@
             body: JSON.stringify({
               text: userText,
               mode: currentMode,
-              history: chatHistory, // 👈 SEND HISTORY TO SERVER
+              history: chatHistory,
+              sessionId: sessionId, // 👈 SEND SESSION ID TO SERVER
             }),
           });
 

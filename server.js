@@ -7,12 +7,85 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
+import { Client } from "pg";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3000;
+
+// ----------------------------------------------------------------------
+// 👇 NEW: DATABASE SETUP 👇
+// ----------------------------------------------------------------------
+const client = new Client({
+  connectionString: process.env.DATABASE_URL,
+  // Optional: Add SSL configuration for Render/cloud services
+  ssl: {
+    rejectUnauthorized: false,
+  },
+});
+
+client
+  .connect()
+  .then(() => console.log("Database connected successfully!"))
+  .catch((err) => console.error("Database connection failed", err));
+
+// server.js (part of the new DB setup block)
+
+client
+  .connect()
+  .then(async () => {
+    console.log("Database connected successfully!");
+
+    // 🚨 IMPORTANT: Define your table schema here
+    const createTableQuery = `
+      CREATE TABLE IF NOT EXISTS chat_records (
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        session_id VARCHAR(255) NOT NULL,
+        role VARCHAR(50) NOT NULL, -- 'user' or 'model'
+        message_text TEXT NOT NULL,
+        mode VARCHAR(50), -- 'casual', 'roast', etc.
+        model_used VARCHAR(50) -- e.g., 'llama3.1', 'gemini-2.5-flash'
+      );
+    `;
+    await client.query(createTableQuery);
+    console.log("Chat records table checked/created.");
+  })
+  .catch((err) =>
+    console.error("Database connection failed or table creation error", err)
+  );
+
+// server.js (Place this function anywhere near the top, after the DB client is created)
+
+/**
+ * Saves a single chat message record to the database.
+ * @param {string} sessionId - Unique ID for the current user's session.
+ * @param {string} role - 'user' or 'model'.
+ * @param {string} text - The message content.
+ * @param {string} mode - The persona mode used.
+ * @param {string} modelUsed - The AI model that responded.
+ */
+async function saveChatRecord(sessionId, role, text, mode, modelUsed) {
+  if (!client || client.readyState !== "connected") return; // Skip if DB is down/not connected
+
+  const query = `
+    INSERT INTO chat_records (session_id, role, message_text, mode, model_used)
+    VALUES ($1, $2, $3, $4, $5);
+  `;
+  const values = [sessionId, role, text, mode, modelUsed];
+
+  try {
+    await client.query(query, values);
+    // console.log(`[DB] Saved ${role} message.`); // Uncomment for verbose logging
+  } catch (error) {
+    console.error(
+      `[DB ERROR] Failed to save chat record for ${role}:`,
+      error.message
+    );
+  }
+}
 
 // ----------------------------------------------------------------------
 // 👇 CONFIGURE API SETTINGS 👇
@@ -53,7 +126,8 @@ const PERSONAS = {
 
 // --- SECURE API ENDPOINT with Context & Fallback ---
 app.post("/api/chat", async (req, res) => {
-  const { text, mode, history } = req.body;
+  // Destructure a new required field: sessionId
+  const { text, mode, history, sessionId } = req.body; // 👈 UPDATED DESTRUCTURE
   const systemInstruction = PERSONAS[mode] || PERSONAS.casual;
 
   // ---------------------------------------------------------
@@ -107,6 +181,10 @@ app.post("/api/chat", async (req, res) => {
   // ---------------------------------------------------------
 
   // 1. **PRIORITY: OLLAMA LOCAL MODEL**
+
+  // ---------------------------------------------------------
+  // 1. PRIORITY: OLLAMA LOCAL MODEL
+  // ---------------------------------------------------------
   if (OLLAMA_API_ENDPOINT) {
     try {
       console.log(`Using OLLAMA with Context...`);
@@ -126,9 +204,13 @@ app.post("/api/chat", async (req, res) => {
       }
 
       const data = await response.json();
-      return res.json({
-        reply: `[Ollama] ${data.response}`,
-      });
+      const replyText = `[Ollama] ${data.response}`;
+
+      // 🚨 LOG SUCCESSFUL INTERACTION 🚨
+      await saveChatRecord(sessionId, "user", text, mode, OLLAMA_MODEL);
+      await saveChatRecord(sessionId, "model", replyText, mode, OLLAMA_MODEL);
+
+      return res.json({ reply: replyText });
     } catch (error) {
       console.warn(
         `Ollama/ngrok failed. Falling back to Gemini. Error: ${error.message}`
@@ -136,19 +218,24 @@ app.post("/api/chat", async (req, res) => {
     }
   }
 
-  // 2. **FALLBACK: GEMINI API**
+  // ---------------------------------------------------------
+  // 2. FALLBACK: GEMINI API
+  // ---------------------------------------------------------
   if (ai) {
     try {
       console.log("Falling back to Gemini API with Context.");
       for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
           const response = await ai.models.generateContent({
-            model: modelName,
-            contents: geminiHistory, // Pass the full history array
-            config: { systemInstruction: systemInstruction },
+            /* ... */
           });
+          const replyText = `[Gemini: ${modelName}] ${response.text}`;
 
-          return res.json({ reply: `[Gemini: ${modelName}] ${response.text}` });
+          // 🚨 LOG SUCCESSFUL INTERACTION 🚨
+          await saveChatRecord(sessionId, "user", text, mode, modelName);
+          await saveChatRecord(sessionId, "model", replyText, mode, modelName);
+
+          return res.json({ reply: replyText });
         } catch (e) {
           console.warn(`Gemini model ${modelName} failed. Trying next model.`);
         }
