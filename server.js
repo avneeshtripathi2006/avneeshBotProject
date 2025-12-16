@@ -20,9 +20,7 @@ const port = process.env.PORT || 5000;
 // ----------------------------------------------------------------------
 // ⚙️ CONFIGURATION
 // ----------------------------------------------------------------------
-const OLLAMA_URL =
-  process.env.OLLAMA_URL ||
-  "https://unimposing-mable-subfulgently.ngrok-free.dev";
+const OLLAMA_URL = process.env.OLLAMA_URL || "https://unimposing-mable-subfulgently.ngrok-free.dev";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const DATABASE_URL = process.env.DATABASE_URL;
 const SECRET_KEY = process.env.SECRET_KEY || "avneesh_super_secret_key";
@@ -53,48 +51,16 @@ const pool = new Pool({
 (async () => {
   try {
     const client = await pool.connect();
-    // Ensure tables exist (using your requested schema)
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        user_id SERIAL PRIMARY KEY,
-        username VARCHAR(50) NOT NULL,
-        email VARCHAR(100) UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS chat_sessions (
-        session_id SERIAL PRIMARY KEY,
-        user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
-        session_name VARCHAR(100) DEFAULT 'New Chat',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS chat_records (
-        id SERIAL PRIMARY KEY,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        user_id VARCHAR(255),
-        user_name VARCHAR(255),
-        user_agent TEXT,
-        ip_address VARCHAR(45),
-        session_id VARCHAR(255),
-        role VARCHAR(50) NOT NULL,
-        message_text TEXT NOT NULL,
-        mode VARCHAR(50),
-        model_used VARCHAR(50)
-      );
-    `);
+    await client.query(`CREATE TABLE IF NOT EXISTS users (user_id SERIAL PRIMARY KEY, username VARCHAR(50) NOT NULL, email VARCHAR(100) UNIQUE NOT NULL, password_hash TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
+    await client.query(`CREATE TABLE IF NOT EXISTS chat_sessions (session_id SERIAL PRIMARY KEY, user_id INT REFERENCES users(user_id) ON DELETE CASCADE, session_name VARCHAR(100) DEFAULT 'New Chat', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
+    await client.query(`CREATE TABLE IF NOT EXISTS chat_records (id SERIAL PRIMARY KEY, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, user_id VARCHAR(255), user_name VARCHAR(255), user_agent TEXT, ip_address VARCHAR(45), session_id VARCHAR(255), role VARCHAR(50) NOT NULL, message_text TEXT NOT NULL, mode VARCHAR(50), model_used VARCHAR(50));`);
     client.release();
     console.log("Database Verified.");
-  } catch (err) {
-    console.error("DB Error:", err);
-  }
+  } catch (err) { console.error("DB Error:", err); }
 })();
 
 // ----------------------------------------------------------------------
-// 🎭 PERSONAS (ALL MODES ADDED)
+// 🎭 PERSONAS
 // ----------------------------------------------------------------------
 const PERSONAS = {
   casual:
@@ -115,8 +81,8 @@ const PERSONAS = {
 // 🔐 MIDDLEWARE
 // ----------------------------------------------------------------------
 const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
   if (!token) return res.sendStatus(401);
   jwt.verify(token, SECRET_KEY, (err, user) => {
     if (err) return res.sendStatus(403);
@@ -126,12 +92,9 @@ const authenticateToken = (req, res, next) => {
 };
 
 const optionalAuth = (req, res, next) => {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
-  if (!token) {
-    req.user = null;
-    return next();
-  }
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) { req.user = null; return next(); }
   jwt.verify(token, SECRET_KEY, (err, user) => {
     req.user = err ? null : user;
     next();
@@ -139,18 +102,36 @@ const optionalAuth = (req, res, next) => {
 };
 
 // ----------------------------------------------------------------------
-// ➡️ HELPER: AUTO-TITLE GENERATOR
+// ➡️ HELPER: AUTO-TITLE GENERATOR (Supports Ollama & Gemini)
 // ----------------------------------------------------------------------
 async function generateSessionTitle(firstMessage) {
-  if (!ai) return "New Chat";
-  try {
-    const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
-    const prompt = `Summarize this user message into a very short, catchy title (max 4-5 words). No quotes. Message: "${firstMessage}"`;
-    const result = await model.generateContent(prompt);
-    return (await result.response).text().trim();
-  } catch (e) {
-    return "New Chat";
+  const prompt = `Summarize this message into a short, catchy title (max 4 words). Do not use quotes. Message: "${firstMessage}"`;
+  
+  // 1. Try Ollama First (Since you use Ngrok)
+  if (OLLAMA_API_ENDPOINT) {
+    try {
+        const response = await fetch(OLLAMA_API_ENDPOINT, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
+            body: JSON.stringify({ model: OLLAMA_MODEL, prompt: prompt, stream: false }),
+        });
+        if (response.ok) {
+            const data = await response.json();
+            return data.response.replace(/["\n]/g, '').trim().substring(0, 50);
+        }
+    } catch (e) { console.log("Ollama title gen failed, trying Gemini"); }
   }
+
+  // 2. Try Gemini Fallback
+  if (ai) {
+    try {
+      const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+      const result = await model.generateContent(prompt);
+      return (await result.response).text().replace(/["\n]/g, '').trim().substring(0, 50);
+    } catch (e) { console.log("Gemini title gen failed"); }
+  }
+
+  return "New Chat";
 }
 
 // ----------------------------------------------------------------------
@@ -158,83 +139,46 @@ async function generateSessionTitle(firstMessage) {
 // ----------------------------------------------------------------------
 
 // Auth
-app.post("/api/register", async (req, res) => {
+app.post('/api/register', async (req, res) => {
   const { username, email, password } = req.body;
   try {
     const hash = await bcrypt.hash(password, 10);
-    const result = await pool.query(
-      "INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING user_id, username",
-      [username, email, hash]
-    );
-    res
-      .status(201)
-      .json({ message: "User registered", user_id: result.rows[0].user_id });
-  } catch (error) {
-    res.status(500).json({ message: "Error registering" });
-  }
+    const result = await pool.query('INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING user_id, username', [username, email, hash]);
+    res.status(201).json({ message: 'User registered', user_id: result.rows[0].user_id });
+  } catch (error) { res.status(500).json({ message: 'Error registering' }); }
 });
 
-app.post("/api/login", async (req, res) => {
+app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
   try {
-    const result = await pool.query(
-      "SELECT user_id, username, password_hash FROM users WHERE email = $1",
-      [email]
-    );
+    const result = await pool.query('SELECT user_id, username, password_hash FROM users WHERE email = $1', [email]);
     const user = result.rows[0];
-    if (!user || !(await bcrypt.compare(password, user.password_hash)))
-      return res.status(401).json({ message: "Invalid credentials" });
-    const token = jwt.sign(
-      { user_id: user.user_id, username: user.username },
-      SECRET_KEY,
-      { expiresIn: "7d" }
-    );
-    res.json({
-      message: "Login successful",
-      token,
-      user_id: user.user_id,
-      username: user.username,
-    });
-  } catch (error) {
-    res.status(500).json({ message: "Server error" });
-  }
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) return res.status(401).json({ message: 'Invalid credentials' });
+    const token = jwt.sign({ user_id: user.user_id, username: user.username }, SECRET_KEY, { expiresIn: '7d' });
+    res.json({ message: 'Login successful', token, user_id: user.user_id, username: user.username });
+  } catch (error) { res.status(500).json({ message: 'Server error' }); }
 });
 
 // Sessions
-app.get("/api/sessions", authenticateToken, async (req, res) => {
+app.get('/api/sessions', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query(
-      "SELECT session_id, session_name, created_at FROM chat_sessions WHERE user_id = $1 ORDER BY created_at DESC",
-      [req.user.user_id]
-    );
+    const result = await pool.query('SELECT session_id, session_name, created_at FROM chat_sessions WHERE user_id = $1 ORDER BY created_at DESC', [req.user.user_id]);
     res.json(result.rows);
-  } catch (error) {
-    res.status(500).json({ message: "Error fetching sessions" });
-  }
+  } catch (error) { res.status(500).json({ message: 'Error fetching sessions' }); }
 });
 
-app.post("/api/sessions", authenticateToken, async (req, res) => {
+app.post('/api/sessions', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query(
-      "INSERT INTO chat_sessions (user_id, session_name) VALUES ($1, $2) RETURNING *",
-      [req.user.user_id, req.body.session_name || "New Chat"]
-    );
+    const result = await pool.query('INSERT INTO chat_sessions (user_id, session_name) VALUES ($1, $2) RETURNING *', [req.user.user_id, req.body.session_name || 'New Chat']);
     res.status(201).json({ session: result.rows[0] });
-  } catch (error) {
-    res.status(500).json({ message: "Error creating session" });
-  }
+  } catch (error) { res.status(500).json({ message: 'Error creating session' }); }
 });
 
-app.get("/api/chat/:session_id", authenticateToken, async (req, res) => {
+app.get('/api/chat/:session_id', authenticateToken, async (req, res) => {
   try {
-    const result = await pool.query(
-      "SELECT role, message_text as content FROM chat_records WHERE session_id = $1 ORDER BY timestamp",
-      [req.params.session_id]
-    );
+    const result = await pool.query('SELECT role, message_text as content FROM chat_records WHERE session_id = $1 ORDER BY timestamp', [req.params.session_id]);
     res.json(result.rows);
-  } catch (error) {
-    res.status(500).json({ message: "Error fetching history" });
-  }
+  } catch (error) { res.status(500).json({ message: 'Error fetching history' }); }
 });
 
 // Chat & Auto-Title
@@ -242,84 +186,53 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
   const { prompt, mode, history, session_id, user_name, user_agent } = req.body;
   const user = req.user;
   const systemInstruction = PERSONAS[mode] || PERSONAS.casual;
-  const ipAddress = req.headers["x-forwarded-for"]
-    ? req.headers["x-forwarded-for"].split(",")[0]
-    : req.ip;
+  const ipAddress = req.headers["x-forwarded-for"] ? req.headers["x-forwarded-for"].split(",")[0] : req.ip;
   const storedUserId = user ? String(user.user_id) : "guest";
 
   // 1. Context
   let contextMessages = [];
+  let isFirstMessage = false;
+
   if (user && session_id && !isNaN(session_id)) {
-    try {
-      const dbHistory = await pool.query(
-        "SELECT role, message_text FROM chat_records WHERE session_id = $1 ORDER BY timestamp",
-        [session_id]
-      );
-      contextMessages = dbHistory.rows.map((r) => ({
-        role: r.role,
-        text: r.message_text,
-      }));
-    } catch (e) {}
+     try {
+       const dbHistory = await pool.query('SELECT role, message_text FROM chat_records WHERE session_id = $1 ORDER BY timestamp', [session_id]);
+       contextMessages = dbHistory.rows.map(r => ({ role: r.role, text: r.message_text }));
+       if (contextMessages.length === 0) isFirstMessage = true; // Flag for auto-title
+     } catch(e) {}
   } else if (Array.isArray(history)) {
-    contextMessages = history.map((h) => ({ role: h.role, text: h.text }));
+     contextMessages = history.map(h => ({ role: h.role, text: h.text }));
   }
 
   // 2. Generate AI Response
   let replyText = "";
   let modelUsed = "none";
-
+  
   if (OLLAMA_API_ENDPOINT) {
     try {
       let ollamaPrompt = `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n${systemInstruction}<|eot_id|>\n`;
-      contextMessages.forEach(
-        (msg) =>
-          (ollamaPrompt += `<|start_header_id|>${
-            msg.role === "user" ? "user" : "assistant"
-          }<|end_header_id|>\n${msg.text}<|eot_id|>\n`)
-      );
+      contextMessages.forEach(msg => ollamaPrompt += `<|start_header_id|>${msg.role==='user'?'user':'assistant'}<|end_header_id|>\n${msg.text}<|eot_id|>\n`);
       ollamaPrompt += `<|start_header_id|>user<|end_header_id|>\n${prompt}<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n`;
       const response = await fetch(OLLAMA_API_ENDPOINT, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "ngrok-skip-browser-warning": "true",
-        },
-        body: JSON.stringify({
-          model: OLLAMA_MODEL,
-          prompt: ollamaPrompt,
-          stream: false,
-        }),
+        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
+        body: JSON.stringify({ model: OLLAMA_MODEL, prompt: ollamaPrompt, stream: false }),
       });
       if (response.ok) {
         const data = await response.json();
-        replyText = data.response;
-        modelUsed = OLLAMA_MODEL;
+        replyText = data.response; modelUsed = OLLAMA_MODEL;
       }
     } catch (e) {}
   }
 
   if (!replyText && ai) {
     try {
-      const geminiHistory = contextMessages.map((msg) => ({
-        role: msg.role === "user" ? "user" : "model",
-        parts: [{ text: msg.text }],
-      }));
-      const fullContents = [
-        ...geminiHistory,
-        { role: "user", parts: [{ text: prompt }] },
-      ];
+      const geminiHistory = contextMessages.map(msg => ({ role: msg.role==='user'?'user':'model', parts: [{ text: msg.text }] }));
+      const fullContents = [...geminiHistory, { role: 'user', parts: [{ text: prompt }] }];
       for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
-          const model = ai.getGenerativeModel({
-            model: modelName,
-            systemInstruction,
-          });
-          const result = await model.generateContent({
-            contents: fullContents,
-          });
-          replyText = (await result.response).text();
-          modelUsed = modelName;
-          break;
+          const model = ai.getGenerativeModel({ model: modelName, systemInstruction });
+          const result = await model.generateContent({ contents: fullContents });
+          replyText = (await result.response).text(); modelUsed = modelName; break;
         } catch (e) {}
       }
     } catch (e) {}
@@ -329,53 +242,20 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
 
   // 3. Save & Auto-Title
   try {
-    // Save User
-    await pool.query(
-      `INSERT INTO chat_records (session_id, user_id, user_name, user_agent, ip_address, role, message_text, mode, model_used) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [
-        session_id,
-        storedUserId,
-        user_name,
-        user_agent,
-        ipAddress,
-        "user",
-        prompt,
-        mode,
-        "user-input",
-      ]
-    );
-    // Save Bot
-    await pool.query(
-      `INSERT INTO chat_records (session_id, user_id, user_name, user_agent, ip_address, role, message_text, mode, model_used) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [
-        session_id,
-        storedUserId,
-        user_name,
-        user_agent,
-        ipAddress,
-        "model",
-        replyText,
-        mode,
-        modelUsed,
-      ]
-    );
+    const saveQ = `INSERT INTO chat_records (session_id, user_id, user_name, user_agent, ip_address, role, message_text, mode, model_used) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`;
+    await pool.query(saveQ, [session_id, storedUserId, user_name, user_agent, ipAddress, 'user', prompt, mode, 'user-input']);
+    await pool.query(saveQ, [session_id, storedUserId, user_name, user_agent, ipAddress, 'model', replyText, mode, modelUsed]);
 
-    // AUTO-TITLE LOGIC: If user is registered AND context is empty (First Message), rename session
-    if (user && session_id && contextMessages.length === 0) {
+    // AUTO-TITLE LOGIC: Check flag set earlier
+    if (user && session_id && isFirstMessage) {
+      console.log("Generating title for session", session_id);
       const newTitle = await generateSessionTitle(prompt);
-      await pool.query(
-        "UPDATE chat_sessions SET session_name = $1 WHERE session_id = $2",
-        [newTitle, session_id]
-      );
+      await pool.query('UPDATE chat_sessions SET session_name = $1 WHERE session_id = $2', [newTitle, session_id]);
     }
-  } catch (err) {
-    console.error("Save Error:", err);
-  }
+  } catch (err) { console.error("Save Error:", err); }
 
   res.json({ response: replyText });
 });
 
-app.get("*", (req, res) =>
-  res.sendFile(path.join(__dirname, "client/build", "index.html"))
-);
+app.get("*", (req, res) => res.sendFile(path.join(__dirname, "client/build", "index.html")));
 app.listen(port, () => console.log(`Server listening on port ${port}`));

@@ -427,20 +427,19 @@ body.mode-positive { background: #1e3a1e; }
         max-width: 350px;
     }
 }
-/* ... Keep all your existing styles ... */
+/* ... Keep your existing desktop styles ... */
 
 /* --- MOBILE MENU STYLES --- */
 .mobile-menu-btn {
-    display: none; /* Hidden on desktop */
+    display: none;
     position: absolute;
     top: 15px;
     left: 15px;
-    z-index: 1000;
-    font-size: 1.5rem;
-    color: white;
-    background: #333;
-    padding: 5px 10px;
-    border-radius: 5px;
+    z-index: 1002; /* Higher than sidebar */
+    font-size: 1.8rem;
+    color: white; /* Visible on dark background */
+    background: transparent;
+    border: none;
     cursor: pointer;
 }
 
@@ -451,18 +450,21 @@ body.mode-positive { background: #1e3a1e; }
 /* --- MOBILE RESPONSIVENESS --- */
 @media (max-width: 768px) {
     .mobile-menu-btn {
-        display: block; /* Show on mobile */
+        display: block;
     }
 
     .sidebar {
         position: fixed;
-        left: -280px; /* Hide off-screen */
         top: 0;
-        height: 100%;
-        width: 250px;
-        z-index: 1001;
+        left: -100%; /* Fully hide off-screen */
+        width: 75%; /* Covers 75% of screen */
+        height: 100vh;
+        z-index: 1001; /* High z-index to sit on top */
+        background-color: #1a1a1a;
         transition: left 0.3s ease-in-out;
-        box-shadow: 2px 0 10px rgba(0,0,0,0.5);
+        box-shadow: 4px 0 15px rgba(0,0,0,0.5);
+        display: flex; /* Ensure it's not hidden */
+        flex-direction: column;
     }
 
     .sidebar.open {
@@ -472,17 +474,22 @@ body.mode-positive { background: #1e3a1e; }
     .sidebar-overlay {
         display: block;
         position: fixed;
-        top: 0; left: 0; right: 0; bottom: 0;
-        background: rgba(0,0,0,0.5);
-        z-index: 1000;
+        top: 0; 
+        left: 0; 
+        width: 100%; 
+        height: 100%;
+        background: rgba(0,0,0,0.6);
+        z-index: 1000; /* Behind sidebar, in front of content */
+        backdrop-filter: blur(2px);
     }
     
     .container {
         width: 100%;
     }
-    
-    /* Adjust header so title doesn't overlap with menu button */
+
+    /* Push header text so it doesn't hide behind the hamburger button */
     .header h2 {
-        margin-left: 40px; 
+        margin-left: 50px;
+        font-size: 1.2rem;
     }
 }
