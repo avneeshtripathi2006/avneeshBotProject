@@ -28,6 +28,7 @@ const SECRET_KEY = process.env.SECRET_KEY || "avneesh_super_secret_key";
 const OLLAMA_MODEL = "llama3.1:latest";
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
+// 👇 UPDATED: User's Strict Model List
 const GEMINI_FALLBACK_ORDER = [
   "gemini-2.5-flash-lite",
   "gemini-2.5-flash",
@@ -41,7 +42,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, "client/build")));
 
 // ----------------------------------------------------------------------
-// 🗄️ DATABASE SETUP
+// 🗄️ DATABASE SETUP (Original Schema)
 // ----------------------------------------------------------------------
 const pool = new Pool({
   connectionString: DATABASE_URL,
@@ -51,11 +52,47 @@ const pool = new Pool({
 (async () => {
   try {
     const client = await pool.connect();
-    await client.query(`CREATE TABLE IF NOT EXISTS users (user_id SERIAL PRIMARY KEY, username VARCHAR(50) NOT NULL, email VARCHAR(100) UNIQUE NOT NULL, password_hash TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
-    await client.query(`CREATE TABLE IF NOT EXISTS chat_sessions (session_id SERIAL PRIMARY KEY, user_id INT REFERENCES users(user_id) ON DELETE CASCADE, session_name VARCHAR(100) DEFAULT 'New Chat', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
-    await client.query(`CREATE TABLE IF NOT EXISTS chat_records (id SERIAL PRIMARY KEY, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, user_id VARCHAR(255), user_name VARCHAR(255), user_agent TEXT, ip_address VARCHAR(45), session_id VARCHAR(255), role VARCHAR(50) NOT NULL, message_text TEXT NOT NULL, mode VARCHAR(50), model_used VARCHAR(50));`);
+    
+    // 1. Users
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        user_id SERIAL PRIMARY KEY,
+        username VARCHAR(50) NOT NULL,
+        email VARCHAR(100) UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 2. Chat Sessions
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS chat_sessions (
+        session_id SERIAL PRIMARY KEY,
+        user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
+        session_name VARCHAR(100) DEFAULT 'New Chat',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 3. Chat Records (Rich Metadata Structure)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS chat_records (
+        id SERIAL PRIMARY KEY,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        user_id VARCHAR(255),
+        user_name VARCHAR(255),
+        user_agent TEXT,
+        ip_address VARCHAR(45),
+        session_id VARCHAR(255),
+        role VARCHAR(50) NOT NULL,
+        message_text TEXT NOT NULL,
+        mode VARCHAR(50),
+        model_used VARCHAR(50)
+      );
+    `);
+    
     client.release();
-    console.log("Database Verified.");
+    console.log("Database Verified (Original Schema).");
   } catch (err) { console.error("DB Error:", err); }
 })();
 
@@ -102,12 +139,12 @@ const optionalAuth = (req, res, next) => {
 };
 
 // ----------------------------------------------------------------------
-// ➡️ HELPER: AUTO-TITLE GENERATOR (Supports Ollama & Gemini)
+// ➡️ HELPER: AUTO-TITLE GENERATOR
 // ----------------------------------------------------------------------
 async function generateSessionTitle(firstMessage) {
-  const prompt = `Summarize this message into a short, catchy title (max 4 words). Do not use quotes. Message: "${firstMessage}"`;
+  const prompt = `Summarize this message into a short, catchy title (max 4 words). No quotes. Message: "${firstMessage}"`;
   
-  // 1. Try Ollama First (Since you use Ngrok)
+  // 1. Try Ollama (via Ngrok)
   if (OLLAMA_API_ENDPOINT) {
     try {
         const response = await fetch(OLLAMA_API_ENDPOINT, {
@@ -119,16 +156,16 @@ async function generateSessionTitle(firstMessage) {
             const data = await response.json();
             return data.response.replace(/["\n]/g, '').trim().substring(0, 50);
         }
-    } catch (e) { console.log("Ollama title gen failed, trying Gemini"); }
+    } catch (e) { /* ignore */ }
   }
 
-  // 2. Try Gemini Fallback
+  // 2. Try Gemini (Updated to 2.5-flash)
   if (ai) {
     try {
-      const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+      const model = ai.getGenerativeModel({ model: "gemini-2.5-flash" }); // Updated Model
       const result = await model.generateContent(prompt);
       return (await result.response).text().replace(/["\n]/g, '').trim().substring(0, 50);
-    } catch (e) { console.log("Gemini title gen failed"); }
+    } catch (e) { /* ignore */ }
   }
 
   return "New Chat";
@@ -181,7 +218,7 @@ app.get('/api/chat/:session_id', authenticateToken, async (req, res) => {
   } catch (error) { res.status(500).json({ message: 'Error fetching history' }); }
 });
 
-// Chat & Auto-Title
+// Chat Logic
 app.post("/api/chat", optionalAuth, async (req, res) => {
   const { prompt, mode, history, session_id, user_name, user_agent } = req.body;
   const user = req.user;
@@ -189,7 +226,7 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
   const ipAddress = req.headers["x-forwarded-for"] ? req.headers["x-forwarded-for"].split(",")[0] : req.ip;
   const storedUserId = user ? String(user.user_id) : "guest";
 
-  // 1. Context
+  // 1. Build Context
   let contextMessages = [];
   let isFirstMessage = false;
 
@@ -197,16 +234,17 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
      try {
        const dbHistory = await pool.query('SELECT role, message_text FROM chat_records WHERE session_id = $1 ORDER BY timestamp', [session_id]);
        contextMessages = dbHistory.rows.map(r => ({ role: r.role, text: r.message_text }));
-       if (contextMessages.length === 0) isFirstMessage = true; // Flag for auto-title
+       if (contextMessages.length === 0) isFirstMessage = true;
      } catch(e) {}
   } else if (Array.isArray(history)) {
      contextMessages = history.map(h => ({ role: h.role, text: h.text }));
   }
 
-  // 2. Generate AI Response
+  // 2. Generate Response
   let replyText = "";
   let modelUsed = "none";
   
+  // A. Ollama
   if (OLLAMA_API_ENDPOINT) {
     try {
       let ollamaPrompt = `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n${systemInstruction}<|eot_id|>\n`;
@@ -224,6 +262,7 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
     } catch (e) {}
   }
 
+  // B. Gemini (Using strict 2.5 versions)
   if (!replyText && ai) {
     try {
       const geminiHistory = contextMessages.map(msg => ({ role: msg.role==='user'?'user':'model', parts: [{ text: msg.text }] }));
@@ -233,7 +272,7 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
           const model = ai.getGenerativeModel({ model: modelName, systemInstruction });
           const result = await model.generateContent({ contents: fullContents });
           replyText = (await result.response).text(); modelUsed = modelName; break;
-        } catch (e) {}
+        } catch (e) { console.warn(`Gemini ${modelName} failed.`); }
       }
     } catch (e) {}
   }
@@ -246,9 +285,8 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
     await pool.query(saveQ, [session_id, storedUserId, user_name, user_agent, ipAddress, 'user', prompt, mode, 'user-input']);
     await pool.query(saveQ, [session_id, storedUserId, user_name, user_agent, ipAddress, 'model', replyText, mode, modelUsed]);
 
-    // AUTO-TITLE LOGIC: Check flag set earlier
+    // Auto-Title Logic (First Message Only)
     if (user && session_id && isFirstMessage) {
-      console.log("Generating title for session", session_id);
       const newTitle = await generateSessionTitle(prompt);
       await pool.query('UPDATE chat_sessions SET session_name = $1 WHERE session_id = $2', [newTitle, session_id]);
     }

@@ -26,7 +26,7 @@ const AuthView = ({ onLoginSuccess, onGuestLogin }) => {
             const data = await response.json();
             if (response.ok) {
                 if (isRegistering) { setMessage('Registered! Please login.'); setIsRegistering(false); }
-                else { onLoginSuccess(data.token, data.username); } // Pass username from DB
+                else { onLoginSuccess(data.token, data.username); }
             } else { setMessage(data.message); }
         } catch (error) { setMessage('Network Error'); }
         finally { setIsLoading(false); }
@@ -53,7 +53,7 @@ function App() {
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [isGuest, setIsGuest] = useState(false);
     const [userName, setUserName] = useState("User"); 
-    const [showSidebar, setShowSidebar] = useState(false); // Mobile Toggle State
+    const [showSidebar, setShowSidebar] = useState(false);
     const userAgent = navigator.userAgent;
     const [tempGuestId] = useState("guest-" + Date.now());
 
@@ -65,13 +65,13 @@ function App() {
     const [isLoading, setIsLoading] = useState(false);
     const chatBoxRef = useRef(null);
 
-    // --- AUTH HANDLERS ---
+    // Auth Handlers
     const handleLoginSuccess = (receivedToken, dbUsername) => {
         localStorage.setItem('token', receivedToken);
         setToken(receivedToken);
         setIsGuest(false);
         setIsLoggedIn(true);
-        setUserName(dbUsername || "User"); // USE DB NAME, NO POPUP
+        setUserName(dbUsername || "User");
     };
 
     const handleGuestLogin = () => {
@@ -91,11 +91,10 @@ function App() {
         setActiveSessionId(null);
     };
 
-    // --- SESSION LOGIC ---
     useEffect(() => {
         if (token && !isGuest) {
             setIsLoggedIn(true);
-            fetchSessions(false); // Initial load
+            fetchSessions(false);
         }
     }, [token, isGuest]);
 
@@ -105,14 +104,12 @@ function App() {
         return fetch(url, { ...options, headers });
     };
 
-    // Fix: Added keepActive flag to prevent jumping
     const fetchSessions = async (keepActive = false) => {
         try {
             const res = await protectedFetch(`${API_BASE_URL}/sessions`);
             if (res.ok) {
                 const sessions = await res.json();
                 setSessionsList(sessions);
-                // Only switch session if we are NOT keeping active, or if we have no active session
                 if (!keepActive && sessions.length > 0 && !activeSessionId) {
                     loadSessionHistory(sessions[0].session_id);
                 } else if (sessions.length === 0) {
@@ -123,7 +120,7 @@ function App() {
     };
 
     const startNewChat = async () => {
-        setShowSidebar(false); // Close sidebar on mobile
+        setShowSidebar(false);
         if (isGuest) { setChatHistory([{ role: "model", text: `Hello ${userName}!` }]); return; }
         const res = await protectedFetch(`${API_BASE_URL}/sessions`, { method: 'POST', body: JSON.stringify({ session_name: 'New Chat' }) });
         if (res.ok) {
@@ -136,7 +133,7 @@ function App() {
 
     const loadSessionHistory = async (sessionId) => {
         if (isGuest) return;
-        setShowSidebar(false); // Close sidebar on mobile
+        setShowSidebar(false);
         setActiveSessionId(sessionId);
         setIsLoading(true);
         const res = await protectedFetch(`${API_BASE_URL}/chat/${sessionId}`);
@@ -171,7 +168,7 @@ function App() {
             const data = await response.json();
             setChatHistory(prev => prev.map(msg => msg.id === loaderId ? { role: "model", text: data.response } : msg));
             
-            // Refresh list to update title (pass true to KEEP current session active)
+            // Refresh sessions list silently to update Title
             if (!isGuest) fetchSessions(true);
 
         } catch (error) {
@@ -187,9 +184,7 @@ function App() {
                 <AuthView onLoginSuccess={handleLoginSuccess} onGuestLogin={handleGuestLogin} />
             ) : (
                 <div className="chat-interface-container">
-                    {/* MOBILE TOGGLE BUTTON */}
                     <div className="mobile-menu-btn" onClick={() => setShowSidebar(!showSidebar)}>☰</div>
-
                     <div className={`sidebar ${showSidebar ? 'open' : ''}`}>
                         <h3 className="sidebar-title">Avneesh Bot</h3>
                         <p style={{color:'#aaa', paddingLeft:'15px', fontSize:'0.8rem'}}>User: {userName}</p>
@@ -205,10 +200,8 @@ function App() {
                         </div>}
                         <button className="logout-btn" onClick={handleLogout}>Logout</button>
                     </div>
-
-                    {/* OVERLAY for Mobile */}
                     {showSidebar && <div className="sidebar-overlay" onClick={() => setShowSidebar(false)}></div>}
-
+                    
                     <div className={`container mode-${currentMode}`}>
                         <div className="header">
                             <h2>{isGuest ? "Guest Chat" : sessionsList.find(s => s.session_id === activeSessionId)?.session_name || "Avneesh Bot"}</h2>
