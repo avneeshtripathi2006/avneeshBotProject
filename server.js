@@ -30,7 +30,6 @@ const SECRET_KEY = process.env.SECRET_KEY || "avneesh_super_secret_key";
 const OLLAMA_MODEL = "llama3.1:latest";
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
-// Stable Gemini Models
 const GEMINI_FALLBACK_ORDER = [
   "gemini-1.5-flash",
   "gemini-1.5-pro",
@@ -44,7 +43,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, "client/build")));
 
 // ----------------------------------------------------------------------
-// 🗄️ DATABASE SETUP (The "Old Structure" Return)
+// 🗄️ DATABASE SETUP
 // ----------------------------------------------------------------------
 const pool = new Pool({
   connectionString: DATABASE_URL,
@@ -54,9 +53,7 @@ const pool = new Pool({
 (async () => {
   try {
     const client = await pool.connect();
-    console.log("Database connected successfully!");
-
-    // 1. Users Table (For Auth)
+    // Ensure tables exist (using your requested schema)
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         user_id SERIAL PRIMARY KEY,
@@ -66,8 +63,6 @@ const pool = new Pool({
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-
-    // 2. Chat Sessions (For Sidebar List)
     await client.query(`
       CREATE TABLE IF NOT EXISTS chat_sessions (
         session_id SERIAL PRIMARY KEY,
@@ -76,39 +71,30 @@ const pool = new Pool({
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-
-    // 3. Chat Records (REVERTED TO YOUR OLD STRUCTURE)
-    // We use 'session_ref_id' to link to the sidebar, but keep all your metadata columns.
     await client.query(`
       CREATE TABLE IF NOT EXISTS chat_records (
         id SERIAL PRIMARY KEY,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        
-        -- Your requested metadata columns
-        user_id VARCHAR(255),       -- Can store Registered ID or Guest ID
-        user_name VARCHAR(255),     -- From the Popup
-        user_agent TEXT,            -- From Frontend
-        ip_address VARCHAR(45),     -- Captured by Backend
-        
-        -- Linking to the session
-        session_id VARCHAR(255),    -- Keeping this as VARCHAR to match your old style (or link to session_ref_id)
-        
+        user_id VARCHAR(255),
+        user_name VARCHAR(255),
+        user_agent TEXT,
+        ip_address VARCHAR(45),
+        session_id VARCHAR(255),
         role VARCHAR(50) NOT NULL,
-        message_text TEXT NOT NULL, -- Renamed back to 'message_text'
+        message_text TEXT NOT NULL,
         mode VARCHAR(50),
         model_used VARCHAR(50)
       );
     `);
-
     client.release();
-    console.log("Database tables verified (Old Structure Restored).");
+    console.log("Database Verified.");
   } catch (err) {
-    console.error("FATAL DB ERROR:", err);
+    console.error("DB Error:", err);
   }
 })();
 
 // ----------------------------------------------------------------------
-// 🎭 PERSONAS
+// 🎭 PERSONAS (ALL MODES ADDED)
 // ----------------------------------------------------------------------
 const PERSONAS = {
   casual:
@@ -131,7 +117,7 @@ const PERSONAS = {
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
-  if (token == null) return res.sendStatus(401);
+  if (!token) return res.sendStatus(401);
   jwt.verify(token, SECRET_KEY, (err, user) => {
     if (err) return res.sendStatus(403);
     req.user = user;
@@ -142,22 +128,36 @@ const authenticateToken = (req, res, next) => {
 const optionalAuth = (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
-  if (token == null) {
+  if (!token) {
     req.user = null;
     return next();
   }
   jwt.verify(token, SECRET_KEY, (err, user) => {
-    if (err) req.user = null;
-    else req.user = user;
+    req.user = err ? null : user;
     next();
   });
 };
 
 // ----------------------------------------------------------------------
+// ➡️ HELPER: AUTO-TITLE GENERATOR
+// ----------------------------------------------------------------------
+async function generateSessionTitle(firstMessage) {
+  if (!ai) return "New Chat";
+  try {
+    const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const prompt = `Summarize this user message into a very short, catchy title (max 4-5 words). No quotes. Message: "${firstMessage}"`;
+    const result = await model.generateContent(prompt);
+    return (await result.response).text().trim();
+  } catch (e) {
+    return "New Chat";
+  }
+}
+
+// ----------------------------------------------------------------------
 // ➡️ API ROUTES
 // ----------------------------------------------------------------------
 
-// --- AUTH ---
+// Auth
 app.post("/api/register", async (req, res) => {
   const { username, email, password } = req.body;
   try {
@@ -200,7 +200,7 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
-// --- SESSIONS ---
+// Sessions
 app.get("/api/sessions", authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(
@@ -227,7 +227,6 @@ app.post("/api/sessions", authenticateToken, async (req, res) => {
 
 app.get("/api/chat/:session_id", authenticateToken, async (req, res) => {
   try {
-    // Note: We select 'message_text' but alias it as 'content' so the frontend doesn't break
     const result = await pool.query(
       "SELECT role, message_text as content FROM chat_records WHERE session_id = $1 ORDER BY timestamp",
       [req.params.session_id]
@@ -238,25 +237,19 @@ app.get("/api/chat/:session_id", authenticateToken, async (req, res) => {
   }
 });
 
-// --- CHAT LOGIC (Unified Save) ---
+// Chat & Auto-Title
 app.post("/api/chat", optionalAuth, async (req, res) => {
-  // Destructure ALL your old metadata fields
   const { prompt, mode, history, session_id, user_name, user_agent } = req.body;
   const user = req.user;
   const systemInstruction = PERSONAS[mode] || PERSONAS.casual;
-
-  // Capture IP
   const ipAddress = req.headers["x-forwarded-for"]
-    ? req.headers["x-forwarded-for"].split(",")[0].trim()
+    ? req.headers["x-forwarded-for"].split(",")[0]
     : req.ip;
-
-  // Determine User ID (Registered or Guest)
   const storedUserId = user ? String(user.user_id) : "guest";
 
-  // 1. Build Context
+  // 1. Context
   let contextMessages = [];
   if (user && session_id && !isNaN(session_id)) {
-    // Registered: Load from DB using message_text
     try {
       const dbHistory = await pool.query(
         "SELECT role, message_text FROM chat_records WHERE session_id = $1 ORDER BY timestamp",
@@ -271,11 +264,10 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
     contextMessages = history.map((h) => ({ role: h.role, text: h.text }));
   }
 
-  // 2. AI Generation (Ollama -> Gemini)
+  // 2. Generate AI Response
   let replyText = "";
   let modelUsed = "none";
 
-  // A. Ollama
   if (OLLAMA_API_ENDPOINT) {
     try {
       let ollamaPrompt = `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n${systemInstruction}<|eot_id|>\n`;
@@ -286,7 +278,6 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
           }<|end_header_id|>\n${msg.text}<|eot_id|>\n`)
       );
       ollamaPrompt += `<|start_header_id|>user<|end_header_id|>\n${prompt}<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n`;
-
       const response = await fetch(OLLAMA_API_ENDPOINT, {
         method: "POST",
         headers: {
@@ -304,12 +295,9 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
         replyText = data.response;
         modelUsed = OLLAMA_MODEL;
       }
-    } catch (e) {
-      console.warn("Ollama failed", e.message);
-    }
+    } catch (e) {}
   }
 
-  // B. Gemini
   if (!replyText && ai) {
     try {
       const geminiHistory = contextMessages.map((msg) => ({
@@ -334,46 +322,52 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
           break;
         } catch (e) {}
       }
-    } catch (e) {
-      console.error("Gemini Error", e);
-    }
+    } catch (e) {}
   }
 
   if (!replyText) return res.status(503).json({ response: "AI unavailable." });
 
-  // 3. UNIFIED SAVE (Using Old Columns)
+  // 3. Save & Auto-Title
   try {
-    const saveQuery = `
-      INSERT INTO chat_records 
-      (session_id, user_id, user_name, user_agent, ip_address, role, message_text, mode, model_used)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-    `;
+    // Save User
+    await pool.query(
+      `INSERT INTO chat_records (session_id, user_id, user_name, user_agent, ip_address, role, message_text, mode, model_used) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        session_id,
+        storedUserId,
+        user_name,
+        user_agent,
+        ipAddress,
+        "user",
+        prompt,
+        mode,
+        "user-input",
+      ]
+    );
+    // Save Bot
+    await pool.query(
+      `INSERT INTO chat_records (session_id, user_id, user_name, user_agent, ip_address, role, message_text, mode, model_used) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        session_id,
+        storedUserId,
+        user_name,
+        user_agent,
+        ipAddress,
+        "model",
+        replyText,
+        mode,
+        modelUsed,
+      ]
+    );
 
-    // Save User Message
-    await pool.query(saveQuery, [
-      session_id,
-      storedUserId,
-      user_name,
-      user_agent,
-      ipAddress,
-      "user",
-      prompt,
-      mode,
-      "user-input",
-    ]);
-
-    // Save Bot Message
-    await pool.query(saveQuery, [
-      session_id,
-      storedUserId,
-      user_name,
-      user_agent,
-      ipAddress,
-      "model",
-      replyText,
-      mode,
-      modelUsed,
-    ]);
+    // AUTO-TITLE LOGIC: If user is registered AND context is empty (First Message), rename session
+    if (user && session_id && contextMessages.length === 0) {
+      const newTitle = await generateSessionTitle(prompt);
+      await pool.query(
+        "UPDATE chat_sessions SET session_name = $1 WHERE session_id = $2",
+        [newTitle, session_id]
+      );
+    }
   } catch (err) {
     console.error("Save Error:", err);
   }

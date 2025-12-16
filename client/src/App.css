@@ -427,3 +427,62 @@ body.mode-positive { background: #1e3a1e; }
         max-width: 350px;
     }
 }
+/* ... Keep all your existing styles ... */
+
+/* --- MOBILE MENU STYLES --- */
+.mobile-menu-btn {
+    display: none; /* Hidden on desktop */
+    position: absolute;
+    top: 15px;
+    left: 15px;
+    z-index: 1000;
+    font-size: 1.5rem;
+    color: white;
+    background: #333;
+    padding: 5px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.sidebar-overlay {
+    display: none;
+}
+
+/* --- MOBILE RESPONSIVENESS --- */
+@media (max-width: 768px) {
+    .mobile-menu-btn {
+        display: block; /* Show on mobile */
+    }
+
+    .sidebar {
+        position: fixed;
+        left: -280px; /* Hide off-screen */
+        top: 0;
+        height: 100%;
+        width: 250px;
+        z-index: 1001;
+        transition: left 0.3s ease-in-out;
+        box-shadow: 2px 0 10px rgba(0,0,0,0.5);
+    }
+
+    .sidebar.open {
+        left: 0; /* Slide in */
+    }
+
+    .sidebar-overlay {
+        display: block;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.5);
+        z-index: 1000;
+    }
+    
+    .container {
+        width: 100%;
+    }
+    
+    /* Adjust header so title doesn't overlap with menu button */
+    .header h2 {
+        margin-left: 40px; 
+    }
+}
