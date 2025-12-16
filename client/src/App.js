@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from "react";
 import "./App.css";
 
-// ⚠️ UPDATE THIS to your Render URL:
+// ⚠️ IMPORTANT: CHANGE THIS TO YOUR RENDER URL FOR PRODUCTION
 const API_BASE_URL = "https://avneeshbotproject.onrender.com/api"; 
 
 // =================================================================
-// 1. AUTH VIEW COMPONENT (With Guest Option)
+// 1. AUTH VIEW COMPONENT
 // =================================================================
 const AuthView = ({ onLoginSuccess, onGuestLogin }) => {
     const [isRegistering, setIsRegistering] = useState(false);
@@ -19,7 +19,6 @@ const AuthView = ({ onLoginSuccess, onGuestLogin }) => {
         e.preventDefault();
         setMessage('');
         setIsLoading(true);
-
         const endpoint = isRegistering ? 'register' : 'login';
         const payload = isRegistering ? { username, email, password } : { email, password };
 
@@ -30,20 +29,19 @@ const AuthView = ({ onLoginSuccess, onGuestLogin }) => {
                 body: JSON.stringify(payload),
             });
             const data = await response.json();
-
             if (response.ok) {
                 if (isRegistering) {
                     setMessage('Registration successful! Please log in.');
                     setIsRegistering(false);
                 } else {
-                    onLoginSuccess(data.token, data.user_id, data.username || "User");
+                    onLoginSuccess(data.token, data.username || "User");
                 }
             } else {
-                setMessage(data.message || `Error during ${endpoint}.`);
+                setMessage(data.message || 'Error occurred.');
             }
         } catch (error) {
             console.error(error);
-            setMessage('Network error. Check your backend connection.');
+            setMessage('Network error. Check backend connection.');
         } finally {
             setIsLoading(false);
         }
@@ -59,16 +57,11 @@ const AuthView = ({ onLoginSuccess, onGuestLogin }) => {
                 <button type="submit" disabled={isLoading}>{isLoading ? 'Processing...' : isRegistering ? 'Register' : 'Login'}</button>
             </form>
             {message && <p className="auth-message">{message}</p>}
-            
             <button className="toggle-btn" onClick={() => setIsRegistering(!isRegistering)}>
                 {isRegistering ? 'Already have an account? Login' : "Don't have an account? Register"}
             </button>
-            
             <div className="guest-divider"><span>OR</span></div>
-            
-            <button className="guest-btn" onClick={onGuestLogin}>
-                😎 Continue as Guest
-            </button>
+            <button className="guest-btn" onClick={onGuestLogin}>😎 Continue as Guest</button>
         </div>
     );
 };
@@ -80,13 +73,15 @@ function App() {
     // --- STATE ---
     const [token, setToken] = useState(localStorage.getItem('token'));
     const [isLoggedIn, setIsLoggedIn] = useState(false);
-    const [isGuest, setIsGuest] = useState(false); // Track if user is Guest
-    const [userName, setUserName] = useState("Guest"); // Display name
+    const [isGuest, setIsGuest] = useState(false);
+    const [userName, setUserName] = useState("Guest");
+
+    // 👇 Temporary ID for Guest Data Collection (Created once on load)
+    const [tempGuestId] = useState("guest-" + Date.now() + "-" + Math.random().toString(36).substr(2, 9));
 
     const [sessionsList, setSessionsList] = useState([]);
     const [activeSessionId, setActiveSessionId] = useState(null);
     const [chatHistory, setChatHistory] = useState([]);
-    
     const [currentMode, setCurrentMode] = useState("casual");
     const [userInput, setUserInput] = useState("");
     const [isLoading, setIsLoading] = useState(false);
@@ -96,7 +91,7 @@ function App() {
     const initialGreeting = { role: "model", text: "Aur bhai? Avneesh here. Bol kya chal raha hai?" };
 
     // --- AUTH HANDLERS ---
-    const handleLoginSuccess = (receivedToken, userId, name) => {
+    const handleLoginSuccess = (receivedToken, name) => {
         localStorage.setItem('token', receivedToken);
         setToken(receivedToken);
         setUserName(name || "User");
@@ -105,12 +100,12 @@ function App() {
     };
 
     const handleGuestLogin = () => {
-        const name = prompt("Please enter your name to start chatting:") || "Guest";
+        const name = prompt("Enter your name to start:") || "Guest";
         setUserName(name);
         setIsGuest(true);
         setIsLoggedIn(true);
-        setChatHistory([initialGreeting]); // Reset history for guest
-        setSessionsList([]); // Guests have no sessions
+        setChatHistory([initialGreeting]);
+        setSessionsList([]);
     };
 
     const handleLogout = () => {
@@ -119,7 +114,6 @@ function App() {
         setIsLoggedIn(false);
         setIsGuest(false);
         setChatHistory([]);
-        setSessionsList([]);
         setActiveSessionId(null);
     };
 
@@ -130,7 +124,7 @@ function App() {
         return fetch(url, { ...options, headers });
     };
 
-    // --- SESSION LOGIC (Only for Registered Users) ---
+    // --- SESSION LOGIC (Registered Only) ---
     useEffect(() => {
         if (token && !isGuest) {
             setIsLoggedIn(true);
@@ -152,7 +146,6 @@ function App() {
 
     const startNewChat = async () => {
         if (isGuest) {
-            // Guest "New Chat" just clears the screen
             setChatHistory([initialGreeting]);
             return;
         }
@@ -166,7 +159,7 @@ function App() {
     };
 
     const loadSessionHistory = async (sessionId) => {
-        if (isGuest) return; 
+        if (isGuest) return;
         setActiveSessionId(sessionId);
         setIsLoading(true);
         const res = await protectedFetch(`${API_BASE_URL}/chat/${sessionId}`);
@@ -180,36 +173,38 @@ function App() {
     // --- SEND MESSAGE LOGIC ---
     const generateAIResponse = async () => {
         if (!userInput.trim() || isLoading) return;
-        
-        // For registered users, we need a session. For guests, we don't.
-        if (!isGuest && !activeSessionId) return; 
+        if (!isGuest && !activeSessionId) return;
 
         const userText = userInput.trim();
         setIsLoading(true);
         setUserInput(""); 
-
         const loaderId = Date.now();
         setChatHistory(prev => [...prev, { role: "user", text: userText }, { role: "model", text: "", id: loaderId }]);
 
         try {
+            // Determine Payload
+            const payload = {
+                prompt: userText,
+                mode: currentMode,
+                // If Guest: Send History + Temp ID. If User: Send Real Session ID.
+                ...(isGuest 
+                    ? { history: chatHistory, session_id: tempGuestId } 
+                    : { session_id: activeSessionId }
+                )
+            };
+
             const response = await protectedFetch(`${API_BASE_URL}/chat`, {
                 method: "POST",
-                body: JSON.stringify({
-                    prompt: userText,
-                    mode: currentMode,
-                    // IF GUEST: Send history. IF USER: Send session_id
-                    ...(isGuest ? { history: chatHistory } : { session_id: activeSessionId }) 
-                }),
+                body: JSON.stringify(payload),
             });
-
             const data = await response.json();
             
             setChatHistory(prev => prev.map(msg => msg.id === loaderId ? { role: "model", text: data.response } : msg));
 
+            // Refresh session name if it was "New Chat" (Registered Users)
             if (!isGuest && sessionsList.find(s => s.session_id === activeSessionId)?.session_name === 'New Chat') {
-                fetchSessions(); // Refresh name if it was new
+                fetchSessions();
             }
-
         } catch (error) {
             setChatHistory(prev => prev.map(msg => msg.id === loaderId ? { role: "model", text: "Error connecting to bot." } : msg));
         } finally {
@@ -222,7 +217,6 @@ function App() {
         if (chatBoxRef.current) chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
     }, [chatHistory]);
 
-
     return (
         <div className={`app-wrapper ${!isLoggedIn ? 'auth-view' : 'chat-view'}`}>
             {!isLoggedIn ? (
@@ -231,13 +225,13 @@ function App() {
                 <div className="chat-interface-container">
                     <div className="sidebar">
                         <h3 className="sidebar-title">Avneesh Bot</h3>
-                        <p style={{fontSize: '0.8rem', color: '#aaa'}}>Logged in as: {userName}</p>
+                        <p style={{fontSize: '0.8rem', color: '#aaa', paddingLeft:'15px'}}>Logged in as: {userName}</p>
                         <button className="new-chat-btn" onClick={startNewChat}>+ New Chat</button>
                         <hr className="sidebar-divider"/>
                         
                         {isGuest ? (
-                            <div style={{padding: '10px', color: '#888', fontStyle: 'italic'}}>
-                                Guest Mode: Chats are not saved.
+                            <div style={{padding: '15px', color: '#888', fontStyle: 'italic', fontSize: '0.9rem'}}>
+                                Guest Mode Active.<br/>Chats are saved anonymously for training.
                             </div>
                         ) : (
                             <div className="session-list">
