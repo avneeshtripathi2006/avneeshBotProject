@@ -29,9 +29,9 @@ const OLLAMA_MODEL = "llama3.1:latest";
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
 const GEMINI_FALLBACK_ORDER = [
-  "gemini-1.5-flash",
-  "gemini-1.5-pro",
-  "gemini-pro",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-flash",
+  "gemini-2.5-pro",
 ];
 
 const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
