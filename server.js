@@ -28,11 +28,13 @@ const SECRET_KEY = process.env.SECRET_KEY || "avneesh_super_secret_key";
 const OLLAMA_MODEL = "llama3.1:latest";
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
-// 👇 UPDATED: User's Strict Model List
+// 👇 YOUR REQUESTED MODELS (With a hidden safety net)
 const GEMINI_FALLBACK_ORDER = [
-  "gemini-2.5-flash-lite",
-  "gemini-2.5-flash",
-  "gemini-2.5-pro",
+  "gemini-2.5-flash-lite", // 1. Try your preferred
+  "gemini-2.5-flash",      // 2. Try your preferred
+  "gemini-2.5-pro",        // 3. Try your preferred
+  "gemini-1.5-flash",      // 4. Backup (High speed)
+  "gemini-pro"             // 5. Ultimate Backup (Always works)
 ];
 
 const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
@@ -42,7 +44,7 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, "client/build")));
 
 // ----------------------------------------------------------------------
-// 🗄️ DATABASE SETUP (Original Schema)
+// 🗄️ DATABASE SETUP
 // ----------------------------------------------------------------------
 const pool = new Pool({
   connectionString: DATABASE_URL,
@@ -52,7 +54,6 @@ const pool = new Pool({
 (async () => {
   try {
     const client = await pool.connect();
-    
     // 1. Users
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
@@ -63,7 +64,6 @@ const pool = new Pool({
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-
     // 2. Chat Sessions
     await client.query(`
       CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -73,8 +73,7 @@ const pool = new Pool({
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
-
-    // 3. Chat Records (Rich Metadata Structure)
+    // 3. Chat Records (Original Schema)
     await client.query(`
       CREATE TABLE IF NOT EXISTS chat_records (
         id SERIAL PRIMARY KEY,
@@ -90,9 +89,8 @@ const pool = new Pool({
         model_used VARCHAR(50)
       );
     `);
-    
     client.release();
-    console.log("Database Verified (Original Schema).");
+    console.log("Database Verified.");
   } catch (err) { console.error("DB Error:", err); }
 })();
 
@@ -144,7 +142,7 @@ const optionalAuth = (req, res, next) => {
 async function generateSessionTitle(firstMessage) {
   const prompt = `Summarize this message into a short, catchy title (max 4 words). No quotes. Message: "${firstMessage}"`;
   
-  // 1. Try Ollama (via Ngrok)
+  // 1. Try Ollama
   if (OLLAMA_API_ENDPOINT) {
     try {
         const response = await fetch(OLLAMA_API_ENDPOINT, {
@@ -159,13 +157,15 @@ async function generateSessionTitle(firstMessage) {
     } catch (e) { /* ignore */ }
   }
 
-  // 2. Try Gemini (Updated to 2.5-flash)
+  // 2. Try Gemini (Fallback Loop)
   if (ai) {
-    try {
-      const model = ai.getGenerativeModel({ model: "gemini-2.5-flash" }); // Updated Model
-      const result = await model.generateContent(prompt);
-      return (await result.response).text().replace(/["\n]/g, '').trim().substring(0, 50);
-    } catch (e) { /* ignore */ }
+    for (const modelName of GEMINI_FALLBACK_ORDER) {
+        try {
+            const model = ai.getGenerativeModel({ model: modelName });
+            const result = await model.generateContent(prompt);
+            return (await result.response).text().replace(/["\n]/g, '').trim().substring(0, 50);
+        } catch (e) { continue; }
+    }
   }
 
   return "New Chat";
@@ -175,7 +175,6 @@ async function generateSessionTitle(firstMessage) {
 // ➡️ API ROUTES
 // ----------------------------------------------------------------------
 
-// Auth
 app.post('/api/register', async (req, res) => {
   const { username, email, password } = req.body;
   try {
@@ -196,7 +195,6 @@ app.post('/api/login', async (req, res) => {
   } catch (error) { res.status(500).json({ message: 'Server error' }); }
 });
 
-// Sessions
 app.get('/api/sessions', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query('SELECT session_id, session_name, created_at FROM chat_sessions WHERE user_id = $1 ORDER BY created_at DESC', [req.user.user_id]);
@@ -218,7 +216,7 @@ app.get('/api/chat/:session_id', authenticateToken, async (req, res) => {
   } catch (error) { res.status(500).json({ message: 'Error fetching history' }); }
 });
 
-// Chat Logic
+// MAIN CHAT LOGIC
 app.post("/api/chat", optionalAuth, async (req, res) => {
   const { prompt, mode, history, session_id, user_name, user_agent } = req.body;
   const user = req.user;
@@ -244,12 +242,13 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
   let replyText = "";
   let modelUsed = "none";
   
-  // A. Ollama
+  // A. Ollama (Only if laptop is ON)
   if (OLLAMA_API_ENDPOINT) {
     try {
       let ollamaPrompt = `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n${systemInstruction}<|eot_id|>\n`;
       contextMessages.forEach(msg => ollamaPrompt += `<|start_header_id|>${msg.role==='user'?'user':'assistant'}<|end_header_id|>\n${msg.text}<|eot_id|>\n`);
       ollamaPrompt += `<|start_header_id|>user<|end_header_id|>\n${prompt}<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n`;
+      
       const response = await fetch(OLLAMA_API_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
@@ -259,22 +258,30 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
         const data = await response.json();
         replyText = data.response; modelUsed = OLLAMA_MODEL;
       }
-    } catch (e) {}
+    } catch (e) { 
+        console.log("Ollama unreachable. Trying Gemini..."); 
+    }
   }
 
-  // B. Gemini (Using strict 2.5 versions)
+  // B. Gemini (Your Models -> Fallback)
   if (!replyText && ai) {
     try {
       const geminiHistory = contextMessages.map(msg => ({ role: msg.role==='user'?'user':'model', parts: [{ text: msg.text }] }));
       const fullContents = [...geminiHistory, { role: 'user', parts: [{ text: prompt }] }];
+      
+      // Tries 2.5-flash-lite -> 2.5-flash -> 2.5-pro -> 1.5-flash -> gemini-pro
       for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
           const model = ai.getGenerativeModel({ model: modelName, systemInstruction });
           const result = await model.generateContent({ contents: fullContents });
-          replyText = (await result.response).text(); modelUsed = modelName; break;
-        } catch (e) { console.warn(`Gemini ${modelName} failed.`); }
+          replyText = (await result.response).text(); 
+          modelUsed = modelName; 
+          break; // Stop loop as soon as ONE works
+        } catch (e) { 
+            console.warn(`Gemini model ${modelName} unavailable.`);
+        }
       }
-    } catch (e) {}
+    } catch (e) { console.error("Fatal Gemini Error:", e); }
   }
 
   if (!replyText) return res.status(503).json({ response: "AI unavailable." });
@@ -285,7 +292,6 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
     await pool.query(saveQ, [session_id, storedUserId, user_name, user_agent, ipAddress, 'user', prompt, mode, 'user-input']);
     await pool.query(saveQ, [session_id, storedUserId, user_name, user_agent, ipAddress, 'model', replyText, mode, modelUsed]);
 
-    // Auto-Title Logic (First Message Only)
     if (user && session_id && isFirstMessage) {
       const newTitle = await generateSessionTitle(prompt);
       await pool.query('UPDATE chat_sessions SET session_name = $1 WHERE session_id = $2', [newTitle, session_id]);
