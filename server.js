@@ -5,123 +5,101 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI } from "@google/genai";
-import { Client } from "pg";
+import pg from "pg"; // Changed to 'pg' to use Pool
+import cors from "cors";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+
+const { Pool } = pg;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 5000; // Recommend 5000 to avoid conflict with React (3000)
 
 // ----------------------------------------------------------------------
-// 👇 DATABASE SETUP (UPDATED FOR NEW USER ID FIELDS) 👇
+// ⚙️ CONFIGURATION & MIDDLEWARE
 // ----------------------------------------------------------------------
-const client = new Client({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false,
-  },
+const OLLAMA_URL = process.env.OLLAMA_URL;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const DATABASE_URL = process.env.DATABASE_URL;
+const SECRET_KEY =
+  process.env.SECRET_KEY || "avneesh_super_secret_key_change_me"; // ENV variable recommended
+
+const OLLAMA_MODEL = "llama3.1:latest";
+const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
+
+const GEMINI_FALLBACK_ORDER = [
+  "gemini-2.0-flash-lite", // Updated to likely available models
+  "gemini-2.0-flash",
+  "gemini-1.5-pro",
+];
+
+const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
+
+app.use(cors()); // Allow Frontend to talk to Backend
+app.use(express.json());
+app.use(express.static(path.join(__dirname, "client/build")));
+
+// ----------------------------------------------------------------------
+// 🗄️ DATABASE SETUP (Relational Schema)
+// ----------------------------------------------------------------------
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
 });
 
-// Connect once and set up the table immediately
+// Initialize Tables (Users, Sessions, Records)
 (async () => {
   try {
-    await client.connect();
+    const client = await pool.connect();
     console.log("Database connected successfully!");
 
-    const createTableQuery = `
+    // 1. Users Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        user_id SERIAL PRIMARY KEY,
+        username VARCHAR(50) NOT NULL,
+        email VARCHAR(100) UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 2. Chat Sessions Table (The Sidebar)
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS chat_sessions (
+        session_id SERIAL PRIMARY KEY,
+        user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
+        session_name VARCHAR(100) DEFAULT 'New Chat',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 3. Chat Records Table (Linked to Sessions)
+    await client.query(`
       CREATE TABLE IF NOT EXISTS chat_records (
         id SERIAL PRIMARY KEY,
-        timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        -- NEW: Permanent ID for personalization (will be null initially)
-        user_id VARCHAR(255), 
-        -- NEW: Name provided by the user (from frontend prompt)
-        user_name VARCHAR(255), 
-        -- NEW: Device/OS info (from frontend's navigator.userAgent)
-        user_agent TEXT, 
-        -- NEW: IP Address captured by the backend
-        ip_address VARCHAR(45),
-        
-        session_id VARCHAR(255) NOT NULL,
+        session_ref_id INT REFERENCES chat_sessions(session_id) ON DELETE CASCADE,
         role VARCHAR(50) NOT NULL,
-        message_text TEXT NOT NULL,
+        content TEXT NOT NULL,
         mode VARCHAR(50),
-        model_used VARCHAR(50)
+        model_used VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `;
-    await client.query(createTableQuery);
-    console.log("Chat records table checked/created and updated.");
+    `);
+
+    client.release();
+    console.log("Database tables verified/created.");
   } catch (err) {
     console.error("FATAL DB ERROR:", err);
   }
 })();
 
-/**
- * Saves a chat record to the DB with full user identification data.
- */
-async function saveChatRecord(
-  sessionId,
-  userId,
-  userName,
-  userAgent,
-  ipAddress,
-  role,
-  text,
-  mode,
-  modelUsed
-) {
-  if (!client) return;
-
-  const safeSessionId = sessionId || "unknown_session";
-
-  const query = `
-    INSERT INTO chat_records (session_id, user_id, user_name, user_agent, ip_address, role, message_text, mode, model_used)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
-  `;
-  const values = [
-    safeSessionId,
-    userId,
-    userName,
-    userAgent,
-    ipAddress,
-    role,
-    text,
-    mode,
-    modelUsed,
-  ];
-
-  try {
-    await client.query(query, values);
-  } catch (error) {
-    console.error(`[DB ERROR] Failed to save ${role} message:`, error.message);
-  }
-}
 // ----------------------------------------------------------------------
-
+// 🎭 PERSONAS
 // ----------------------------------------------------------------------
-// 👇 API & MODEL CONFIGURATION 👇
-// ----------------------------------------------------------------------
-const OLLAMA_URL = process.env.OLLAMA_URL;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const OLLAMA_MODEL = "llama3.1:latest";
-
-const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
-
-const GEMINI_FALLBACK_ORDER = [
-  "gemini-2.5-flash-lite",
-  "gemini-2.5-flash",
-  "gemini-2.5-pro",
-];
-const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
-
-app.use(express.json());
-app.use(express.static(path.join(__dirname, "client/build")));
-
-// For any unhandled request (routing) not caught by your API:
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "client/build", "index.html"));
-});
-
 const PERSONAS = {
   casual:
     "You are Avneesh Tripathi. You are a curious, slightly overthinking CSE student. Keep responses conversational, concise, and helpful. You try talking in Simple English. Your Biggest priority is to maintain the conversation flow. Keep the reply short unless required. Don't come up with new contexts everytime , try to continue previous contexts.",
@@ -138,52 +116,200 @@ const PERSONAS = {
 };
 
 // ----------------------------------------------------------------------
-// 👇 CHAT ENDPOINT (UPDATED FOR USER DATA AND IP CAPTURE) 👇
+// 🔐 MIDDLEWARE
 // ----------------------------------------------------------------------
-app.post("/api/chat", async (req, res) => {
-  // Destructure all expected fields from the React frontend, including new ones
-  const { text, mode, history, sessionId, user_name, user_agent, user_id } =
-    req.body;
+
+// 1. Strict Auth (For managing sessions)
+const authenticateToken = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  if (token == null) return res.sendStatus(401);
+
+  jwt.verify(token, SECRET_KEY, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
+};
+
+// 2. Optional Auth (For Chat - handles Guests vs Users)
+const optionalAuth = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+
+  if (token == null) {
+    req.user = null; // Guest
+    return next();
+  }
+
+  jwt.verify(token, SECRET_KEY, (err, user) => {
+    if (err) req.user = null; // Invalid token -> treat as Guest
+    else req.user = user; // Registered User
+    next();
+  });
+};
+
+// ----------------------------------------------------------------------
+// ➡️ API ROUTES
+// ----------------------------------------------------------------------
+
+// --- AUTHENTICATION ---
+app.post("/api/register", async (req, res) => {
+  const { username, email, password } = req.body;
+  if (!username || !email || !password)
+    return res.status(400).json({ message: "All fields required" });
+
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    const result = await pool.query(
+      "INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING user_id, username",
+      [username, email, hash]
+    );
+    res
+      .status(201)
+      .json({ message: "User registered", user_id: result.rows[0].user_id });
+  } catch (error) {
+    if (error.code === "23505")
+      return res.status(409).json({ message: "Email already exists" });
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+app.post("/api/login", async (req, res) => {
+  const { email, password } = req.body;
+  try {
+    const result = await pool.query(
+      "SELECT user_id, username, password_hash FROM users WHERE email = $1",
+      [email]
+    );
+    const user = result.rows[0];
+
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    const token = jwt.sign(
+      { user_id: user.user_id, username: user.username },
+      SECRET_KEY,
+      { expiresIn: "7d" }
+    );
+    res.json({
+      message: "Login successful",
+      token,
+      user_id: user.user_id,
+      username: user.username,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// --- SESSIONS (Sidebar) ---
+app.get("/api/sessions", authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT session_id, session_name, created_at FROM chat_sessions WHERE user_id = $1 ORDER BY created_at DESC",
+      [req.user.user_id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching sessions" });
+  }
+});
+
+app.post("/api/sessions", authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      "INSERT INTO chat_sessions (user_id, session_name) VALUES ($1, $2) RETURNING *",
+      [req.user.user_id, req.body.session_name || "New Chat"]
+    );
+    res.status(201).json({ session: result.rows[0] });
+  } catch (error) {
+    res.status(500).json({ message: "Error creating session" });
+  }
+});
+
+app.get("/api/chat/:session_id", authenticateToken, async (req, res) => {
+  try {
+    // Verify ownership
+    const check = await pool.query(
+      "SELECT 1 FROM chat_sessions WHERE session_id = $1 AND user_id = $2",
+      [req.params.session_id, req.user.user_id]
+    );
+    if (check.rowCount === 0) return res.sendStatus(403);
+
+    const result = await pool.query(
+      "SELECT role, content, created_at FROM chat_records WHERE session_ref_id = $1 ORDER BY created_at",
+      [req.params.session_id]
+    );
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching history" });
+  }
+});
+
+// --- CHAT GENERATION (The Core Logic) ---
+app.post("/api/chat", optionalAuth, async (req, res) => {
+  // 1. Setup Data
+  const { prompt, mode, history, session_id } = req.body; // 'prompt' matches updated frontend
+  const user = req.user; // Will be null if Guest
   const systemInstruction = PERSONAS[mode] || PERSONAS.casual;
 
-  // CAPTURE IP ADDRESS: Use x-forwarded-for for Render/Proxy, fallback to req.ip
-  const ipAddress = req.headers["x-forwarded-for"]
-    ? req.headers["x-forwarded-for"].split(",")[0].trim()
-    : req.ip;
+  // 2. Build Context (Guest vs User)
+  let contextMessages = [];
 
-  // --- 1. PREPARE OLLAMA PROMPT ---
-  let ollamaPrompt = "<|begin_of_text|>";
-  // ... (Ollama prompt building logic remains the same) ...
-  ollamaPrompt += `<|start_header_id|>system<|end_header_id|>\n${systemInstruction}<|eot_id|>\n`;
+  if (user && session_id) {
+    // REGISTERED: Fetch from DB
+    try {
+      const sessionCheck = await pool.query(
+        "SELECT 1 FROM chat_sessions WHERE session_id = $1 AND user_id = $2",
+        [session_id, user.user_id]
+      );
+      if (sessionCheck.rowCount === 0)
+        return res.status(403).json({ message: "Session Access Denied" });
 
-  if (history && Array.isArray(history)) {
-    history.forEach((msg) => {
-      const role = msg.role === "user" ? "user" : "assistant";
-      ollamaPrompt += `<|start_header_id|>${role}<|end_header_id|>\n${msg.text}<|eot_id|>\n`;
-    });
+      const dbHistory = await pool.query(
+        "SELECT role, content FROM chat_records WHERE session_ref_id = $1 ORDER BY created_at",
+        [session_id]
+      );
+
+      // Standardize format for processing
+      contextMessages = dbHistory.rows.map((r) => ({
+        role: r.role,
+        text: r.content,
+      }));
+    } catch (e) {
+      console.error("DB Context Error", e);
+    }
+  } else {
+    // GUEST: Use history sent from frontend
+    // Map frontend {role: 'model'} to {role: 'assistant'/'model'} as needed
+    if (Array.isArray(history)) {
+      contextMessages = history.map((h) => ({ role: h.role, text: h.text }));
+    }
   }
-  ollamaPrompt += `<|start_header_id|>user<|end_header_id|>\n${text}<|eot_id|>\n`;
-  ollamaPrompt += `<|start_header_id|>assistant<|end_header_id|>\n`;
 
-  // --- 2. PREPARE GEMINI HISTORY ---
-  let geminiHistory = [];
-  // ... (Gemini history building logic remains the same) ...
-  if (history && Array.isArray(history)) {
-    geminiHistory = history.map((msg) => ({
-      role: msg.role === "user" ? "user" : "model",
-      parts: [{ text: msg.text }],
-    }));
-  }
-  geminiHistory.push({ role: "user", parts: [{ text: text }] });
+  // Add current prompt to context for generation
+  const currentMessageObj = { role: "user", text: prompt };
 
   // ---------------------------------------------------------
-  // EXECUTION LOGIC
+  // AI GENERATION LOGIC (Ollama -> Gemini Fallback)
   // ---------------------------------------------------------
+  let replyText = "";
+  let modelUsed = "none";
 
-  // A. PRIORITY: OLLAMA LOCAL MODEL
+  // A. Try OLLAMA
   if (OLLAMA_API_ENDPOINT) {
     try {
       console.log(`Using OLLAMA...`);
+      let ollamaPrompt = `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n${systemInstruction}<|eot_id|>\n`;
+
+      contextMessages.forEach((msg) => {
+        const role = msg.role === "user" ? "user" : "assistant";
+        ollamaPrompt += `<|start_header_id|>${role}<|end_header_id|>\n${msg.text}<|eot_id|>\n`;
+      });
+      ollamaPrompt += `<|start_header_id|>user<|end_header_id|>\n${prompt}<|eot_id|>\n<|start_header_id|>assistant<|end_header_id|>\n`;
+
       const response = await fetch(OLLAMA_API_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -194,91 +320,94 @@ app.post("/api/chat", async (req, res) => {
         }),
       });
 
-      if (!response.ok) throw new Error(`Ollama status: ${response.status}`);
-
-      const data = await response.json();
-      const replyText = `[Ollama] ${data.response}`;
-
-      // SAVE TO DB (UPDATED ARGUMENTS)
-      await saveChatRecord(
-        sessionId,
-        user_id,
-        user_name,
-        user_agent,
-        ipAddress,
-        "user",
-        text,
-        mode,
-        OLLAMA_MODEL
-      );
-      await saveChatRecord(
-        sessionId,
-        user_id,
-        user_name,
-        user_agent,
-        ipAddress,
-        "model",
-        replyText,
-        mode,
-        OLLAMA_MODEL
-      );
-
-      return res.json({ reply: replyText });
+      if (response.ok) {
+        const data = await response.json();
+        replyText = data.response; // Removed "[Ollama]" prefix for cleaner chat
+        modelUsed = OLLAMA_MODEL;
+      } else {
+        throw new Error("Ollama failed");
+      }
     } catch (error) {
-      console.warn(`Ollama failed. Falling back. Error: ${error.message}`);
+      console.warn(`Ollama failed: ${error.message}`);
     }
   }
 
-  // B. FALLBACK: GEMINI API
-  if (ai) {
+  // B. Try GEMINI (If Ollama failed or not configured)
+  if (!replyText && ai) {
     try {
       console.log("Using Gemini API...");
+
+      // Convert standard context to Gemini format
+      const geminiHistory = contextMessages.map((msg) => ({
+        role: msg.role === "user" ? "user" : "model",
+        parts: [{ text: msg.text }],
+      }));
+      // Note: Do NOT push the current prompt to history here; generateContent takes it separately or via contents
+
+      // Gemini 'contents' includes history + current prompt
+      const fullGeminiContents = [
+        ...geminiHistory,
+        { role: "user", parts: [{ text: prompt }] },
+      ];
+
       for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
-          const response = await ai.models.generateContent({
+          const model = ai.getGenerativeModel({
             model: modelName,
-            contents: geminiHistory,
-            config: { systemInstruction: systemInstruction },
+            systemInstruction: systemInstruction,
           });
-          const replyText = `[Gemini: ${modelName}] ${response.text}`;
 
-          // SAVE TO DB (UPDATED ARGUMENTS)
-          await saveChatRecord(
-            sessionId,
-            user_id,
-            user_name,
-            user_agent,
-            ipAddress,
-            "user",
-            text,
-            mode,
-            modelName
-          );
-          await saveChatRecord(
-            sessionId,
-            user_id,
-            user_name,
-            user_agent,
-            ipAddress,
-            "model",
-            replyText,
-            mode,
-            modelName
-          );
+          const result = await model.generateContent({
+            contents: fullGeminiContents,
+          });
 
-          return res.json({ reply: replyText });
+          const response = await result.response;
+          replyText = response.text();
+          modelUsed = modelName;
+          break; // Success! Stop trying models.
         } catch (e) {
-          console.warn(`Gemini ${modelName} failed. Trying next.`);
+          console.warn(`Gemini ${modelName} failed.`);
         }
       }
     } catch (error) {
-      console.error("Fatal Error: Both Ollama and Gemini failed.", error);
+      console.error("Gemini Fatal Error", error);
     }
   }
 
-  res.status(503).json({
-    reply: `AI service unavailable. Check OLLAMA_URL and GEMINI_API_KEY.`,
-  });
+  // 3. Final Response Handling
+  if (!replyText) {
+    return res
+      .status(503)
+      .json({
+        response:
+          "I'm sorry, I'm having trouble connecting to my brain right now. Please try again.",
+      });
+  }
+
+  // 4. Save to DB (ONLY IF REGISTERED USER)
+  if (user && session_id) {
+    try {
+      await pool.query(
+        "INSERT INTO chat_records (session_ref_id, role, content, mode, model_used) VALUES ($1, $2, $3, $4, $5)",
+        [session_id, "user", prompt, mode, "user-input"]
+      );
+      await pool.query(
+        "INSERT INTO chat_records (session_ref_id, role, content, mode, model_used) VALUES ($1, $2, $3, $4, $5)",
+        [session_id, "model", replyText, mode, modelUsed]
+      );
+    } catch (dbErr) {
+      console.error("Failed to save chat to DB:", dbErr);
+    }
+  }
+
+  // 5. Send Response
+  // Frontend expects { response: "..." }
+  res.json({ response: replyText });
+});
+
+// Serve React App for any other route
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "client/build", "index.html"));
 });
 
 app.listen(port, () => {

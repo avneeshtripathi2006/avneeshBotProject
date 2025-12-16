@@ -1,137 +1,326 @@
-/* --- CORE STYLES --- */
+/* =================================================================
+   CORE STYLES - MODIFIED FOR FULL VIEWPORT AND LAYOUT CONTROL
+   ================================================================= */
 body {
-  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-  background-color: #1a1a2e;
-  color: #f0f0f0;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100vh;
-  margin: 0;
-  transition: background 0.5s;
-  -webkit-text-size-adjust: 100%;
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #1a1a2e; /* Base background from your theme */
+    color: #f0f0f0;
+    margin: 0;
+    padding: 0;
+    height: 100vh; /* Use full viewport height */
+    overflow: hidden; /* Prevent body scroll */
+    transition: background 0.5s;
+    -webkit-text-size-adjust: 100%;
 }
+
+/* New wrapper to contain the entire application, controlling 100% of the view */
+.app-wrapper {
+    height: 100%;
+    width: 100%;
+    display: flex; /* Flex layout to switch between auth/chat view */
+}
+
+/* Container for the chat interface (Chat View) */
+.chat-interface-container {
+    display: flex;
+    flex-grow: 1; /* Takes full width/height when loaded */
+    height: 100vh;
+}
+
+/* The main chat area (right column) */
 .container {
-  width: 100%;
-  max-width: 550px;
-  height: 90vh;
-  background: #25253e;
-  border-radius: 20px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+    /* Removed width/height/max-width to allow it to fill the remaining space */
+    flex-grow: 1; 
+    background: #25253e;
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.4); /* Reduced shadow for inner panel */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    /* Removed border-radius */
 }
+
+/* =================================================================
+   SIDEBAR STYLES (NEW)
+   ================================================================= */
+.sidebar {
+    width: 250px;
+    background-color: #1a1a2e; /* Match your main body/header dark tone */
+    color: #ffffff;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-right: 1px solid #333;
+    overflow-y: hidden; /* Control scrolling internally */
+    flex-shrink: 0; /* Prevents sidebar from shrinking */
+}
+
+.sidebar-title {
+    color: #fff;
+    font-size: 1.5em;
+    margin: 0 0 5px 0;
+}
+
+.new-chat-btn {
+    padding: 10px;
+    background-color: #3e3e60; /* Matches your bot message/input background */
+    color: #ffffff;
+    border: 1px solid #4a4a6d;
+    border-radius: 8px; /* Slightly rounded corners */
+    cursor: pointer;
+    transition: background-color 0.2s;
+    font-weight: 500;
+}
+.new-chat-btn:hover {
+    background-color: #4a4a6d;
+}
+
+.sidebar-divider {
+    border: none;
+    border-top: 1px solid #333;
+    margin: 5px 0;
+}
+
+.session-list {
+    flex-grow: 1;
+    overflow-y: auto;
+    /* Use your existing scrollbar styles if possible, or keep simple */
+}
+
+.session-list::-webkit-scrollbar {
+    width: 6px;
+}
+.session-list::-webkit-scrollbar-thumb {
+    background: #4a4a6d; /* Lighter scrollbar for sessions */
+    border-radius: 10px;
+}
+
+.session-item {
+    padding: 10px;
+    margin-bottom: 5px;
+    background-color: transparent;
+    border-radius: 5px;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background-color 0.2s;
+    font-size: 0.95rem;
+}
+
+.session-item:hover {
+    background-color: #3e3e60;
+}
+
+.session-item.active {
+    background-color: #4a4a6d;
+    font-weight: 600;
+}
+
+.logout-btn {
+    padding: 10px;
+    background-color: #f44336; /* Angry mode color for log out */
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    margin-top: 10px;
+}
+
+/* =================================================================
+   AUTHENTICATION VIEW STYLES (NEW)
+   ================================================================= */
+.auth-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    /* Use a color consistent with your dark theme */
+    background-color: #25253e; 
+    color: #e0f7fa;
+}
+
+.auth-container h2 {
+    color: #007bff;
+    margin-bottom: 20px;
+}
+
+.auth-container form {
+    display: flex;
+    flex-direction: column;
+    width: 350px;
+    gap: 15px;
+    padding: 30px;
+    background: #1a1a2e;
+    border-radius: 10px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+}
+
+.auth-container input {
+    padding: 12px 18px;
+    border-radius: 8px;
+    border: 1px solid #4a4a6d;
+    background-color: #3e3e60;
+    color: white;
+    font-size: 1rem;
+    outline: none;
+}
+
+.auth-container button[type="submit"] {
+    background-color: #007bff;
+    color: white;
+    padding: 12px;
+    font-weight: bold;
+    cursor: pointer;
+    border: none;
+    transition: background 0.2s;
+}
+.auth-container button[type="submit"]:hover {
+    background: #0056b3;
+}
+
+.auth-message {
+    color: #f44336; /* Red for errors */
+    margin-top: 10px;
+    font-weight: bold;
+}
+
+.toggle-btn {
+    background: none;
+    border: none;
+    color: #007bff;
+    cursor: pointer;
+    margin-top: 20px;
+    font-size: 0.9rem;
+    text-decoration: underline;
+}
+
+
+/* =================================================================
+   YOUR ORIGINAL STYLES (Remaining)
+   ================================================================= */
 
 /* --- HEADER & MODE SELECTOR --- */
 .header {
-  padding: 20px;
-  background: #1a1a2e;
-  border-bottom: 1px solid #333;
-  text-align: center;
+    padding: 20px;
+    background: #1a1a2e;
+    border-bottom: 1px solid #333;
+    text-align: center;
+    /* Changed display to allow horizontal header items */
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center;
+    flex-wrap: wrap; /* Allow wrapping on small screens */
 }
 .header h2 {
-  margin: 0 0 5px 0;
-  color: #e0f7fa;
+    margin: 0;
+    color: #e0f7fa;
+    font-size: 1.4rem;
 }
 .mode-badge {
-  display: inline-block;
-  padding: 4px 10px;
-  border-radius: 12px;
-  font-size: 0.8rem;
-  font-weight: bold;
-  margin-top: 10px;
-  color: white;
-  background-color: #555;
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: bold;
+    color: white;
+    background-color: #555;
+    margin-left: 10px;
 }
 select {
-  width: 100%;
-  padding: 10px;
-  border-radius: 8px;
-  border: 1px solid #4a4a6d;
-  background-color: #3e3e60;
-  color: white;
-  font-weight: 500;
-  cursor: pointer;
-  margin-top: 15px;
-  appearance: none;
+    width: auto; /* Changed to auto to fit content in header */
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid #4a4a6d;
+    background-color: #3e3e60;
+    color: white;
+    font-weight: 500;
+    cursor: pointer;
+    /* margin-top: 15px; REMOVED */
+    appearance: none;
 }
 
 /* --- CHAT BOX --- */
 #chat-box {
-  flex-grow: 1;
-  padding: 20px;
-  overflow-y: auto;
-  scroll-behavior: smooth;
-  background-color: #25253e;
+    flex-grow: 1;
+    padding: 20px;
+    overflow-y: auto;
+    scroll-behavior: smooth;
+    background-color: #25253e;
 }
 #chat-box::-webkit-scrollbar {
-  width: 8px;
+    width: 8px;
 }
 #chat-box::-webkit-scrollbar-thumb {
-  background: #5a5a8a;
-  border-radius: 10px;
+    background: #5a5a8a;
+    border-radius: 10px;
 }
 
 /* --- MESSAGES --- */
 .message {
-  margin-bottom: 15px;
-  padding: 12px 18px;
-  border-radius: 18px;
-  max-width: 85%;
-  word-wrap: break-word;
-  line-height: 1.5;
-  font-size: 1rem;
-  animation: fadeIn 0.3s ease-in-out;
+    margin-bottom: 15px;
+    padding: 12px 18px;
+    border-radius: 18px;
+    max-width: 85%;
+    word-wrap: break-word;
+    line-height: 1.5;
+    font-size: 1rem;
+    animation: fadeIn 0.3s ease-in-out;
 }
 .user {
-  background: #007bff;
-  color: white;
-  margin-left: auto;
-  border-bottom-right-radius: 4px;
+    background: #007bff;
+    color: white;
+    margin-left: auto;
+    border-bottom-right-radius: 4px;
 }
 .bot {
-  background: #3e3e60;
-  color: #e0f7fa;
-  margin-right: auto;
-  border-bottom-left-radius: 4px;
-  font-weight: 400;
+    background: #3e3e60;
+    color: #e0f7fa;
+    margin-right: auto;
+    border-bottom-left-radius: 4px;
+    font-weight: 400;
 }
 
 /* --- INPUT AREA --- */
 #input-area {
-  display: flex;
-  padding: 15px 20px;
-  background: #1a1a2e;
-  border-top: 1px solid #333;
+    display: flex;
+    padding: 15px 20px;
+    background: #1a1a2e;
+    border-top: 1px solid #333;
 }
 input {
-  flex-grow: 1;
-  padding: 12px 18px;
-  border-radius: 25px;
-  border: none;
-  margin-right: 10px;
-  background-color: #3e3e60;
-  color: white;
-  font-size: 1rem;
-  outline: none;
-  transition: background 0.2s;
+    flex-grow: 1;
+    padding: 12px 18px;
+    border-radius: 25px;
+    border: none;
+    margin-right: 10px;
+    background-color: #3e3e60;
+    color: white;
+    font-size: 1rem;
+    outline: none;
+    transition: background 0.2s;
 }
 input:focus {
-  background-color: #4a4a6d;
+    background-color: #4a4a6d;
 }
 button {
-  padding: 10px 20px;
-  border-radius: 25px;
-  border: none;
-  cursor: pointer;
-  font-weight: bold;
-  background: #007bff;
-  color: white;
-  transition: background 0.2s;
+    /* Base button styles—these are overridden by mode themes and specific buttons (like logout) */
+    padding: 10px 20px;
+    border-radius: 25px;
+    border: none;
+    cursor: pointer;
+    font-weight: bold;
+    background: #007bff;
+    color: white;
+    transition: background 0.2s;
 }
 button:hover {
-  background: #0056b3;
+    background: #0056b3;
+}
+button:disabled {
+    background: #555 !important;
+    cursor: not-allowed;
 }
 
 /* --- LOADING ANIMATION --- */
@@ -164,108 +353,77 @@ button:hover {
     }
 }
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
-/* --- THEMES --- */
-body.mode-casual {
-  background: #1e2124;
-}
-.mode-casual .bot,
-.mode-casual button {
-  background: #5865f2;
-  color: white;
-}
-.mode-casual .mode-badge {
-  background-color: #5865f2;
-}
+/* --- THEMES (Theme styles will now apply to the body and the main chat container) --- */
+/* The Sidebar/Auth View will retain the base dark theme unless explicitly themed */
+body.mode-casual { background: #1e2124; }
+.mode-casual .bot, .mode-casual button:not(.new-chat-btn):not(.logout-btn) { background: #5865f2; color: white; }
+.mode-casual .mode-badge { background-color: #5865f2; }
 
-body.mode-roast {
-  background: #281919;
-}
-.mode-roast .bot,
-.mode-roast button {
-  background: #ff5722;
-  color: white;
-}
-.mode-roast .mode-badge {
-  background-color: #ff5722;
-}
+body.mode-roast { background: #281919; }
+.mode-roast .bot, .mode-roast button:not(.new-chat-btn):not(.logout-btn) { background: #ff5722; color: white; }
+.mode-roast .mode-badge { background-color: #ff5722; }
 
-body.mode-flirt {
-  background: #2e1a2e;
-}
-.mode-flirt .bot,
-.mode-flirt button {
-  background: #e91e63;
-  color: white;
-}
-.mode-flirt .mode-badge {
-  background-color: #e91e63;
-}
+body.mode-flirt { background: #2e1a2e; }
+.mode-flirt .bot, .mode-flirt button:not(.new-chat-btn):not(.logout-btn) { background: #e91e63; color: white; }
+.mode-flirt .mode-badge { background-color: #e91e63; }
 
-body.mode-depressed {
-  background: #1a232f;
-}
-.mode-depressed .bot,
-.mode-depressed button {
-  background: #607d8b;
-  color: white;
-}
-.mode-depressed .mode-badge {
-  background-color: #607d8b;
-}
+body.mode-depressed { background: #1a232f; }
+.mode-depressed .bot, .mode-depressed button:not(.new-chat-btn):not(.logout-btn) { background: #607d8b; color: white; }
+.mode-depressed .mode-badge { background-color: #607d8b; }
 
-body.mode-angry {
-  background: #3c1e1e;
-}
-.mode-angry .bot,
-.mode-angry button {
-  background: #f44336;
-  color: white;
-}
-.mode-angry .mode-badge {
-  background-color: #f44336;
-}
+body.mode-angry { background: #3c1e1e; }
+.mode-angry .bot, .mode-angry button:not(.new-chat-btn):not(.logout-btn) { background: #f44336; color: white; }
+.mode-angry .mode-badge { background-color: #f44336; }
 
-body.mode-positive {
-  background: #1e3a1e;
-}
-.mode-positive .bot,
-.mode-positive button {
-  background: #4caf50;
-  color: white;
-}
-.mode-positive .mode-badge {
-  background-color: #4caf50;
-}
+body.mode-positive { background: #1e3a1e; }
+.mode-positive .bot, .mode-positive button:not(.new-chat-btn):not(.logout-btn) { background: #4caf50; color: white; }
+.mode-positive .mode-badge { background-color: #4caf50; }
 
-/* --- MOBILE --- */
-@media (max-width: 600px) {
-  body {
-    height: 100dvh;
-  }
-  .container {
-    width: 100%;
-    height: 100dvh;
-    max-width: none;
-    border-radius: 0;
-    box-shadow: none;
-  }
-  #chat-box {
-    padding: 15px;
-  }
-  .message {
-    font-size: 0.95rem;
-  }
-  #input-area {
-    padding: 10px 15px;
-  }
+/* --- MOBILE ADJUSTMENTS --- */
+@media (max-width: 768px) {
+    /* Hide the sidebar completely on small screens for a mobile-first chat experience */
+    .sidebar {
+        display: none;
+    }
+    
+    body {
+        height: 100dvh;
+    }
+    .container {
+        width: 100%;
+        height: 100dvh;
+        max-width: none;
+        border-radius: 0;
+        box-shadow: none;
+    }
+    .header {
+        flex-direction: column;
+        gap: 10px;
+    }
+    .header h2 {
+        font-size: 1.2rem;
+    }
+    #chat-box {
+        padding: 15px;
+    }
+    .message {
+        font-size: 0.95rem;
+    }
+    #input-area {
+        padding: 10px 15px;
+    }
+    .auth-container form {
+        width: 90%;
+        max-width: 350px;
+    }
 }
