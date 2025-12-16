@@ -1,0 +1,271 @@
+/* --- CORE STYLES --- */
+body {
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background-color: #1a1a2e;
+  color: #f0f0f0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+  margin: 0;
+  transition: background 0.5s;
+  -webkit-text-size-adjust: 100%;
+}
+.container {
+  width: 100%;
+  max-width: 550px;
+  height: 90vh;
+  background: #25253e;
+  border-radius: 20px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* --- HEADER & MODE SELECTOR --- */
+.header {
+  padding: 20px;
+  background: #1a1a2e;
+  border-bottom: 1px solid #333;
+  text-align: center;
+}
+.header h2 {
+  margin: 0 0 5px 0;
+  color: #e0f7fa;
+}
+.mode-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: bold;
+  margin-top: 10px;
+  color: white;
+  background-color: #555;
+}
+select {
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #4a4a6d;
+  background-color: #3e3e60;
+  color: white;
+  font-weight: 500;
+  cursor: pointer;
+  margin-top: 15px;
+  appearance: none;
+}
+
+/* --- CHAT BOX --- */
+#chat-box {
+  flex-grow: 1;
+  padding: 20px;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  background-color: #25253e;
+}
+#chat-box::-webkit-scrollbar {
+  width: 8px;
+}
+#chat-box::-webkit-scrollbar-thumb {
+  background: #5a5a8a;
+  border-radius: 10px;
+}
+
+/* --- MESSAGES --- */
+.message {
+  margin-bottom: 15px;
+  padding: 12px 18px;
+  border-radius: 18px;
+  max-width: 85%;
+  word-wrap: break-word;
+  line-height: 1.5;
+  font-size: 1rem;
+  animation: fadeIn 0.3s ease-in-out;
+}
+.user {
+  background: #007bff;
+  color: white;
+  margin-left: auto;
+  border-bottom-right-radius: 4px;
+}
+.bot {
+  background: #3e3e60;
+  color: #e0f7fa;
+  margin-right: auto;
+  border-bottom-left-radius: 4px;
+  font-weight: 400;
+}
+
+/* --- INPUT AREA --- */
+#input-area {
+  display: flex;
+  padding: 15px 20px;
+  background: #1a1a2e;
+  border-top: 1px solid #333;
+}
+input {
+  flex-grow: 1;
+  padding: 12px 18px;
+  border-radius: 25px;
+  border: none;
+  margin-right: 10px;
+  background-color: #3e3e60;
+  color: white;
+  font-size: 1rem;
+  outline: none;
+  transition: background 0.2s;
+}
+input:focus {
+  background-color: #4a4a6d;
+}
+button {
+  padding: 10px 20px;
+  border-radius: 25px;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+  background: #007bff;
+  color: white;
+  transition: background 0.2s;
+}
+button:hover {
+  background: #0056b3;
+}
+
+/* --- LOADING ANIMATION --- */
+
+.loading {
+    /* Ensure the bubble has some height/size even if text is empty */
+    min-height: 1.5rem; 
+    font-size: 1.5rem;
+    letter-spacing: 0.3em;
+}
+
+/* This ::after element is what creates the dynamic, cycling dots */
+.loading::after {
+    content: "."; /* Start with one dot */
+    animation: dots 1.5s linear infinite;
+}
+
+/* Define the keyframe animation (keep this as you had it) */
+@keyframes dots {
+    0%,
+    20% {
+        content: ".";
+    }
+    40% {
+        content: "..";
+    }
+    60%,
+    100% {
+        content: "...";
+    }
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* --- THEMES --- */
+body.mode-casual {
+  background: #1e2124;
+}
+.mode-casual .bot,
+.mode-casual button {
+  background: #5865f2;
+  color: white;
+}
+.mode-casual .mode-badge {
+  background-color: #5865f2;
+}
+
+body.mode-roast {
+  background: #281919;
+}
+.mode-roast .bot,
+.mode-roast button {
+  background: #ff5722;
+  color: white;
+}
+.mode-roast .mode-badge {
+  background-color: #ff5722;
+}
+
+body.mode-flirt {
+  background: #2e1a2e;
+}
+.mode-flirt .bot,
+.mode-flirt button {
+  background: #e91e63;
+  color: white;
+}
+.mode-flirt .mode-badge {
+  background-color: #e91e63;
+}
+
+body.mode-depressed {
+  background: #1a232f;
+}
+.mode-depressed .bot,
+.mode-depressed button {
+  background: #607d8b;
+  color: white;
+}
+.mode-depressed .mode-badge {
+  background-color: #607d8b;
+}
+
+body.mode-angry {
+  background: #3c1e1e;
+}
+.mode-angry .bot,
+.mode-angry button {
+  background: #f44336;
+  color: white;
+}
+.mode-angry .mode-badge {
+  background-color: #f44336;
+}
+
+body.mode-positive {
+  background: #1e3a1e;
+}
+.mode-positive .bot,
+.mode-positive button {
+  background: #4caf50;
+  color: white;
+}
+.mode-positive .mode-badge {
+  background-color: #4caf50;
+}
+
+/* --- MOBILE --- */
+@media (max-width: 600px) {
+  body {
+    height: 100dvh;
+  }
+  .container {
+    width: 100%;
+    height: 100dvh;
+    max-width: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  #chat-box {
+    padding: 15px;
+  }
+  .message {
+    font-size: 0.95rem;
+  }
+  #input-area {
+    padding: 10px 15px;
+  }
+}

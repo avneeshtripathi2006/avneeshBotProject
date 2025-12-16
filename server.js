@@ -14,12 +14,12 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // ----------------------------------------------------------------------
-// 👇 DATABASE SETUP (FIXED) 👇
+// 👇 DATABASE SETUP (UPDATED FOR NEW USER ID FIELDS) 👇
 // ----------------------------------------------------------------------
 const client = new Client({
   connectionString: process.env.DATABASE_URL,
   ssl: {
-    rejectUnauthorized: false, // Required for Render's managed Postgres
+    rejectUnauthorized: false,
   },
 });
 
@@ -33,6 +33,15 @@ const client = new Client({
       CREATE TABLE IF NOT EXISTS chat_records (
         id SERIAL PRIMARY KEY,
         timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        -- NEW: Permanent ID for personalization (will be null initially)
+        user_id VARCHAR(255), 
+        -- NEW: Name provided by the user (from frontend prompt)
+        user_name VARCHAR(255), 
+        -- NEW: Device/OS info (from frontend's navigator.userAgent)
+        user_agent TEXT, 
+        -- NEW: IP Address captured by the backend
+        ip_address VARCHAR(45),
+        
         session_id VARCHAR(255) NOT NULL,
         role VARCHAR(50) NOT NULL,
         message_text TEXT NOT NULL,
@@ -41,26 +50,45 @@ const client = new Client({
       );
     `;
     await client.query(createTableQuery);
-    console.log("Chat records table checked/created.");
+    console.log("Chat records table checked/created and updated.");
   } catch (err) {
     console.error("FATAL DB ERROR:", err);
   }
 })();
 
 /**
- * Saves a chat record to the DB. Includes fallback if sessionId is missing.
+ * Saves a chat record to the DB with full user identification data.
  */
-async function saveChatRecord(sessionId, role, text, mode, modelUsed) {
+async function saveChatRecord(
+  sessionId,
+  userId,
+  userName,
+  userAgent,
+  ipAddress,
+  role,
+  text,
+  mode,
+  modelUsed
+) {
   if (!client) return;
 
-  // Fallback if frontend hasn't sent an ID yet
   const safeSessionId = sessionId || "unknown_session";
 
   const query = `
-    INSERT INTO chat_records (session_id, role, message_text, mode, model_used)
-    VALUES ($1, $2, $3, $4, $5);
+    INSERT INTO chat_records (session_id, user_id, user_name, user_agent, ip_address, role, message_text, mode, model_used)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
   `;
-  const values = [safeSessionId, role, text, mode, modelUsed];
+  const values = [
+    safeSessionId,
+    userId,
+    userName,
+    userAgent,
+    ipAddress,
+    role,
+    text,
+    mode,
+    modelUsed,
+  ];
 
   try {
     await client.query(query, values);
@@ -87,7 +115,12 @@ const GEMINI_FALLBACK_ORDER = [
 const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(path.join(__dirname, "client/build")));
+
+// For any unhandled request (routing) not caught by your API:
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "client/build", "index.html"));
+});
 
 const PERSONAS = {
   casual:
@@ -105,14 +138,22 @@ const PERSONAS = {
 };
 
 // ----------------------------------------------------------------------
-// 👇 CHAT ENDPOINT 👇
+// 👇 CHAT ENDPOINT (UPDATED FOR USER DATA AND IP CAPTURE) 👇
 // ----------------------------------------------------------------------
 app.post("/api/chat", async (req, res) => {
-  const { text, mode, history, sessionId } = req.body;
+  // Destructure all expected fields from the React frontend, including new ones
+  const { text, mode, history, sessionId, user_name, user_agent, user_id } =
+    req.body;
   const systemInstruction = PERSONAS[mode] || PERSONAS.casual;
+
+  // CAPTURE IP ADDRESS: Use x-forwarded-for for Render/Proxy, fallback to req.ip
+  const ipAddress = req.headers["x-forwarded-for"]
+    ? req.headers["x-forwarded-for"].split(",")[0].trim()
+    : req.ip;
 
   // --- 1. PREPARE OLLAMA PROMPT ---
   let ollamaPrompt = "<|begin_of_text|>";
+  // ... (Ollama prompt building logic remains the same) ...
   ollamaPrompt += `<|start_header_id|>system<|end_header_id|>\n${systemInstruction}<|eot_id|>\n`;
 
   if (history && Array.isArray(history)) {
@@ -126,6 +167,7 @@ app.post("/api/chat", async (req, res) => {
 
   // --- 2. PREPARE GEMINI HISTORY ---
   let geminiHistory = [];
+  // ... (Gemini history building logic remains the same) ...
   if (history && Array.isArray(history)) {
     geminiHistory = history.map((msg) => ({
       role: msg.role === "user" ? "user" : "model",
@@ -157,9 +199,29 @@ app.post("/api/chat", async (req, res) => {
       const data = await response.json();
       const replyText = `[Ollama] ${data.response}`;
 
-      // SAVE TO DB
-      await saveChatRecord(sessionId, "user", text, mode, OLLAMA_MODEL);
-      await saveChatRecord(sessionId, "model", replyText, mode, OLLAMA_MODEL);
+      // SAVE TO DB (UPDATED ARGUMENTS)
+      await saveChatRecord(
+        sessionId,
+        user_id,
+        user_name,
+        user_agent,
+        ipAddress,
+        "user",
+        text,
+        mode,
+        OLLAMA_MODEL
+      );
+      await saveChatRecord(
+        sessionId,
+        user_id,
+        user_name,
+        user_agent,
+        ipAddress,
+        "model",
+        replyText,
+        mode,
+        OLLAMA_MODEL
+      );
 
       return res.json({ reply: replyText });
     } catch (error) {
@@ -180,9 +242,29 @@ app.post("/api/chat", async (req, res) => {
           });
           const replyText = `[Gemini: ${modelName}] ${response.text}`;
 
-          // SAVE TO DB
-          await saveChatRecord(sessionId, "user", text, mode, modelName);
-          await saveChatRecord(sessionId, "model", replyText, mode, modelName);
+          // SAVE TO DB (UPDATED ARGUMENTS)
+          await saveChatRecord(
+            sessionId,
+            user_id,
+            user_name,
+            user_agent,
+            ipAddress,
+            "user",
+            text,
+            mode,
+            modelName
+          );
+          await saveChatRecord(
+            sessionId,
+            user_id,
+            user_name,
+            user_agent,
+            ipAddress,
+            "model",
+            replyText,
+            mode,
+            modelName
+          );
 
           return res.json({ reply: replyText });
         } catch (e) {
