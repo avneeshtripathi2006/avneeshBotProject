@@ -28,12 +28,12 @@ const SECRET_KEY = process.env.SECRET_KEY || "avneesh_super_secret_key";
 const OLLAMA_MODEL = "llama3.1:latest";
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
-// 👇 UPDATED MODEL LIST: Gemini 2.0 (Newest) + 1.5 Fallbacks
+// 👇 MODEL LIST: Using standard models. 
+// If 1.5-flash gives 404, your API Key might be restricted to specific regions or legacy projects.
 const GEMINI_FALLBACK_ORDER = [
-  "gemini-2.0-flash-exp", 
   "gemini-1.5-flash",
-  "gemini-1.5-flash-8b",
-  "gemini-1.5-pro"
+  "gemini-1.5-pro",
+  "gemini-1.0-pro"
 ];
 
 const ai = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
@@ -120,6 +120,7 @@ async function getOrCreateGuestUser() {
 async function generateSessionTitle(firstMessage) {
   const prompt = `Summarize this message into a short, catchy title (max 4 words). No quotes. Message: "${firstMessage}"`;
   
+  // 1. Try Ollama (Matches Chat Priority)
   if (OLLAMA_API_ENDPOINT) {
     try {
         const response = await fetch(OLLAMA_API_ENDPOINT, {
@@ -127,6 +128,7 @@ async function generateSessionTitle(firstMessage) {
             headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
             body: JSON.stringify({ model: OLLAMA_MODEL, prompt: prompt, stream: false }),
         });
+
         if (response.ok) {
             const data = await response.json();
             return data.response.replace(/["\n]/g, '').trim().substring(0, 50);
@@ -134,6 +136,7 @@ async function generateSessionTitle(firstMessage) {
     } catch (e) { /* Fallback */ }
   }
 
+  // 2. Try Gemini Fallback
   if (ai) {
     for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
@@ -191,7 +194,7 @@ app.get('/api/chat/:session_id', authenticateToken, async (req, res) => {
 });
 
 // ----------------------------------------------------------------------
-// 🚀 STREAMING CHAT ROUTE (MULTI-PARSER)
+// 🚀 STREAMING CHAT ROUTE (BRACKET PARSER FIXED)
 // ----------------------------------------------------------------------
 app.post("/api/chat", optionalAuth, async (req, res) => {
   let { prompt, mode, history, session_id, user_name, user_agent } = req.body;
@@ -244,7 +247,8 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
   let streamingError = null;
 
   try {
-      // A. OLLAMA (Attempt)
+      // A. OLLAMA (WITH BRACKET COUNTER PARSER)
+      // This works even if newlines are missing or data is chunked weirdly
       if (OLLAMA_API_ENDPOINT) {
         try {
              let ollamaPrompt = `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n${systemInstruction}<|eot_id|>\n`;
@@ -261,39 +265,32 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
                  modelUsed = OLLAMA_MODEL;
                  
                  let buffer = "";
+                 let depth = 0; // Tracks { and }
                  
                  for await (const chunk of response.body) {
-                     buffer += chunk.toString();
+                     const text = chunk.toString();
                      
-                     // 1. Try Line Splitting (Standard Ollama)
-                     const lines = buffer.split("\n");
-                     buffer = lines.pop(); // Keep incomplete line
-                     
-                     for (const line of lines) {
-                         if (!line.trim()) continue;
-                         try {
-                             const json = JSON.parse(line);
-                             if (json.response) {
-                                 res.write(json.response);
-                                 fullReplyText += json.response;
+                     for (let i = 0; i < text.length; i++) {
+                         const char = text[i];
+                         buffer += char;
+                         
+                         if (char === '{') {
+                             depth++;
+                         } else if (char === '}') {
+                             depth--;
+                             // If depth hits 0, we have a potentially valid JSON object
+                             if (depth === 0) {
+                                 try {
+                                     const json = JSON.parse(buffer);
+                                     if (json.response) {
+                                         res.write(json.response);
+                                         fullReplyText += json.response;
+                                     }
+                                     buffer = ""; // Reset buffer only on success
+                                 } catch (e) {
+                                     // JSON parse failed (maybe just a brace inside a string?), keep buffering
+                                 }
                              }
-                         } catch(e) {}
-                     }
-                 }
-
-                 // 2. Final Flush (Crucial Step: User observed reply sent but not displayed)
-                 if (buffer.trim()) {
-                     // Attempt JSON Parse
-                     try {
-                         const json = JSON.parse(buffer);
-                         if (json.response) { res.write(json.response); fullReplyText += json.response; }
-                     } catch (e) {
-                         // 3. REGEX FALLBACK (Brute Force)
-                         // If JSON parse fails, try to find "response":"..." pattern
-                         const match = buffer.match(/"response"\s*:\s*"([^"]+)"/);
-                         if (match && match[1]) {
-                             res.write(match[1]);
-                             fullReplyText += match[1];
                          }
                      }
                  }
@@ -330,6 +327,7 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
          }
       }
 
+      // ERROR REPORTING
       if (!fullReplyText) {
           const errMsg = streamingError ? ` (Error: ${streamingError})` : "";
           const sorry = `[System Message: All AI models are currently busy or unavailable.${errMsg} Please try again in a minute.]`;
@@ -344,7 +342,7 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
 
   res.end();
 
-  // 5. POST-STREAM: DB SAVE
+  // 5. POST-STREAM: DB SAVE & TITLE
   if (fullReplyText) {
       try {
         const saveQ = `INSERT INTO chat_records (session_id, user_id, user_name, user_agent, ip_address, role, message_text, mode, model_used) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`;
