@@ -28,12 +28,12 @@ const SECRET_KEY = process.env.SECRET_KEY || "avneesh_super_secret_key";
 const OLLAMA_MODEL = "llama3.1:latest";
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
-// 👇 UPDATED MODEL LIST: Using Gemini 2.0 (Newest/Free) + 1.5 Fallbacks
+// 👇 UPDATED MODEL LIST: Gemini 2.0 (Newest) + 1.5 Fallbacks
 const GEMINI_FALLBACK_ORDER = [
-  "gemini-2.0-flash-exp",  // Newest, fast, generous free tier
-  "gemini-1.5-flash",      // Standard Flash
-  "gemini-1.5-flash-8b",   // Nano Flash
-  "gemini-1.5-pro"         // Standard Pro
+  "gemini-2.0-flash-exp", 
+  "gemini-1.5-flash",
+  "gemini-1.5-flash-8b",
+  "gemini-1.5-pro"
 ];
 
 const ai = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
@@ -53,7 +53,6 @@ const pool = new Pool({
 (async () => {
   try {
     const client = await pool.connect();
-    // Ensure tables exist
     await client.query(`CREATE TABLE IF NOT EXISTS users (user_id SERIAL PRIMARY KEY, username VARCHAR(50) NOT NULL, email VARCHAR(100) UNIQUE NOT NULL, password_hash TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
     await client.query(`CREATE TABLE IF NOT EXISTS chat_sessions (session_id SERIAL PRIMARY KEY, user_id INT REFERENCES users(user_id) ON DELETE CASCADE, session_name VARCHAR(100) DEFAULT 'New Chat', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
     await client.query(`CREATE TABLE IF NOT EXISTS chat_records (id SERIAL PRIMARY KEY, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, user_id INT, user_name VARCHAR(255), user_agent TEXT, ip_address VARCHAR(45), session_id INT, role VARCHAR(50) NOT NULL, message_text TEXT NOT NULL, mode VARCHAR(50), model_used VARCHAR(50));`);
@@ -150,7 +149,6 @@ async function generateSessionTitle(firstMessage) {
 // ----------------------------------------------------------------------
 // ➡️ API ROUTES
 // ----------------------------------------------------------------------
-// (Keep register, login, sessions, and history routes as they were)
 app.post('/api/register', async (req, res) => {
   const { username, email, password } = req.body;
   try {
@@ -193,7 +191,7 @@ app.get('/api/chat/:session_id', authenticateToken, async (req, res) => {
 });
 
 // ----------------------------------------------------------------------
-// 🚀 STREAMING CHAT ROUTE (FIXED WITH BRACKET PARSER)
+// 🚀 STREAMING CHAT ROUTE (MULTI-PARSER)
 // ----------------------------------------------------------------------
 app.post("/api/chat", optionalAuth, async (req, res) => {
   let { prompt, mode, history, session_id, user_name, user_agent } = req.body;
@@ -246,7 +244,7 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
   let streamingError = null;
 
   try {
-      // A. OLLAMA WITH BRACKET PARSER
+      // A. OLLAMA (Attempt)
       if (OLLAMA_API_ENDPOINT) {
         try {
              let ollamaPrompt = `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n${systemInstruction}<|eot_id|>\n`;
@@ -262,29 +260,40 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
              if (response.ok && response.body) {
                  modelUsed = OLLAMA_MODEL;
                  
-                 // 🛠️ ROBUST PARSER: Counts Brackets to find JSON objects
                  let buffer = "";
-                 let depth = 0;
                  
                  for await (const chunk of response.body) {
-                     const text = chunk.toString();
-                     for (let i = 0; i < text.length; i++) {
-                         const char = text[i];
-                         buffer += char;
-                         if (char === '{') depth++;
-                         else if (char === '}') {
-                             depth--;
-                             if (depth === 0) {
-                                 // Found a complete JSON object, parse it immediately
-                                 try {
-                                     const json = JSON.parse(buffer);
-                                     if (json.response) {
-                                         res.write(json.response);
-                                         fullReplyText += json.response;
-                                     }
-                                     buffer = ""; // Clear buffer on success
-                                 } catch (e) { /* Malformed JSON, keep buffering */ }
+                     buffer += chunk.toString();
+                     
+                     // 1. Try Line Splitting (Standard Ollama)
+                     const lines = buffer.split("\n");
+                     buffer = lines.pop(); // Keep incomplete line
+                     
+                     for (const line of lines) {
+                         if (!line.trim()) continue;
+                         try {
+                             const json = JSON.parse(line);
+                             if (json.response) {
+                                 res.write(json.response);
+                                 fullReplyText += json.response;
                              }
+                         } catch(e) {}
+                     }
+                 }
+
+                 // 2. Final Flush (Crucial Step: User observed reply sent but not displayed)
+                 if (buffer.trim()) {
+                     // Attempt JSON Parse
+                     try {
+                         const json = JSON.parse(buffer);
+                         if (json.response) { res.write(json.response); fullReplyText += json.response; }
+                     } catch (e) {
+                         // 3. REGEX FALLBACK (Brute Force)
+                         // If JSON parse fails, try to find "response":"..." pattern
+                         const match = buffer.match(/"response"\s*:\s*"([^"]+)"/);
+                         if (match && match[1]) {
+                             res.write(match[1]);
+                             fullReplyText += match[1];
                          }
                      }
                  }
