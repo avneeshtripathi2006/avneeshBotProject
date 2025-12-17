@@ -28,13 +28,12 @@ const SECRET_KEY = process.env.SECRET_KEY || "avneesh_super_secret_key";
 const OLLAMA_MODEL = "llama3.1:latest";
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
-// 👇 UPDATED MODEL LIST: Standard models with higher quotas
+// 👇 UPDATED MODEL LIST: Using Gemini 2.0 (Newest/Free) + 1.5 Fallbacks
 const GEMINI_FALLBACK_ORDER = [
-  "gemini-1.5-flash",
-  "gemini-1.5-flash-latest",
-  "gemini-1.5-pro",
-  "gemini-1.5-pro-latest",
-  "gemini-pro"
+  "gemini-2.0-flash-exp",  // Newest, fast, generous free tier
+  "gemini-1.5-flash",      // Standard Flash
+  "gemini-1.5-flash-8b",   // Nano Flash
+  "gemini-1.5-pro"         // Standard Pro
 ];
 
 const ai = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
@@ -54,6 +53,7 @@ const pool = new Pool({
 (async () => {
   try {
     const client = await pool.connect();
+    // Ensure tables exist
     await client.query(`CREATE TABLE IF NOT EXISTS users (user_id SERIAL PRIMARY KEY, username VARCHAR(50) NOT NULL, email VARCHAR(100) UNIQUE NOT NULL, password_hash TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
     await client.query(`CREATE TABLE IF NOT EXISTS chat_sessions (session_id SERIAL PRIMARY KEY, user_id INT REFERENCES users(user_id) ON DELETE CASCADE, session_name VARCHAR(100) DEFAULT 'New Chat', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
     await client.query(`CREATE TABLE IF NOT EXISTS chat_records (id SERIAL PRIMARY KEY, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, user_id INT, user_name VARCHAR(255), user_agent TEXT, ip_address VARCHAR(45), session_id INT, role VARCHAR(50) NOT NULL, message_text TEXT NOT NULL, mode VARCHAR(50), model_used VARCHAR(50));`);
@@ -111,7 +111,6 @@ async function getOrCreateGuestUser() {
             "INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING user_id, username",
             ["System Guest", "guest@system.local", hash]
         );
-        console.log("✅ System Guest User Created with ID:", res.rows[0].user_id);
         return res.rows[0].user_id;
     } catch (e) {
         console.error("Error ensuring guest user:", e);
@@ -122,7 +121,6 @@ async function getOrCreateGuestUser() {
 async function generateSessionTitle(firstMessage) {
   const prompt = `Summarize this message into a short, catchy title (max 4 words). No quotes. Message: "${firstMessage}"`;
   
-  // 1. Try Ollama 
   if (OLLAMA_API_ENDPOINT) {
     try {
         const response = await fetch(OLLAMA_API_ENDPOINT, {
@@ -130,19 +128,16 @@ async function generateSessionTitle(firstMessage) {
             headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
             body: JSON.stringify({ model: OLLAMA_MODEL, prompt: prompt, stream: false }),
         });
-
         if (response.ok) {
             const data = await response.json();
             return data.response.replace(/["\n]/g, '').trim().substring(0, 50);
         }
-    } catch (e) { /* Ollama unreachable? Fallback to Gemini */ }
+    } catch (e) { /* Fallback */ }
   }
 
-  // 2. Try Gemini Fallback 
   if (ai) {
     for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
-            const isLegacy = modelName === "gemini-pro";
             const model = ai.getGenerativeModel({ model: modelName });
             const result = await model.generateContent(prompt);
             return (await result.response).text().replace(/["\n]/g, '').trim().substring(0, 50);
@@ -155,6 +150,7 @@ async function generateSessionTitle(firstMessage) {
 // ----------------------------------------------------------------------
 // ➡️ API ROUTES
 // ----------------------------------------------------------------------
+// (Keep register, login, sessions, and history routes as they were)
 app.post('/api/register', async (req, res) => {
   const { username, email, password } = req.body;
   try {
@@ -197,7 +193,7 @@ app.get('/api/chat/:session_id', authenticateToken, async (req, res) => {
 });
 
 // ----------------------------------------------------------------------
-// 🚀 STREAMING CHAT ROUTE (FINAL)
+// 🚀 STREAMING CHAT ROUTE (FIXED WITH BRACKET PARSER)
 // ----------------------------------------------------------------------
 app.post("/api/chat", optionalAuth, async (req, res) => {
   let { prompt, mode, history, session_id, user_name, user_agent } = req.body;
@@ -231,7 +227,6 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
   const systemInstruction = PERSONAS[mode] || PERSONAS.casual;
   const ipAddress = req.headers["x-forwarded-for"] ? req.headers["x-forwarded-for"].split(",")[0] : req.ip;
 
-  // 3. BUILD CONTEXT
   let contextMessages = [];
   let isFirstMessage = false;
 
@@ -251,7 +246,7 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
   let streamingError = null;
 
   try {
-      // A. OLLAMA
+      // A. OLLAMA WITH BRACKET PARSER
       if (OLLAMA_API_ENDPOINT) {
         try {
              let ollamaPrompt = `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n${systemInstruction}<|eot_id|>\n`;
@@ -266,28 +261,32 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
 
              if (response.ok && response.body) {
                  modelUsed = OLLAMA_MODEL;
+                 
+                 // 🛠️ ROBUST PARSER: Counts Brackets to find JSON objects
                  let buffer = "";
+                 let depth = 0;
+                 
                  for await (const chunk of response.body) {
-                     buffer += chunk.toString();
-                     const lines = buffer.split("\n"); 
-                     buffer = lines.pop(); // Hold incomplete line
-                     for (const line of lines) {
-                         if (!line.trim()) continue;
-                         try {
-                             const json = JSON.parse(line);
-                             if (json.response) {
-                                 res.write(json.response);
-                                 fullReplyText += json.response;
+                     const text = chunk.toString();
+                     for (let i = 0; i < text.length; i++) {
+                         const char = text[i];
+                         buffer += char;
+                         if (char === '{') depth++;
+                         else if (char === '}') {
+                             depth--;
+                             if (depth === 0) {
+                                 // Found a complete JSON object, parse it immediately
+                                 try {
+                                     const json = JSON.parse(buffer);
+                                     if (json.response) {
+                                         res.write(json.response);
+                                         fullReplyText += json.response;
+                                     }
+                                     buffer = ""; // Clear buffer on success
+                                 } catch (e) { /* Malformed JSON, keep buffering */ }
                              }
-                         } catch(e) {}
+                         }
                      }
-                 }
-                 // Flush remaining buffer
-                 if (buffer.trim()) {
-                     try {
-                         const json = JSON.parse(buffer);
-                         if (json.response) { res.write(json.response); fullReplyText += json.response; }
-                     } catch (e) {}
                  }
              }
         } catch (e) { console.log("Ollama Skipped"); }
@@ -322,7 +321,6 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
          }
       }
 
-      // 🛠️ CRITICAL FIX: If ALL models fail, tell the frontend!
       if (!fullReplyText) {
           const errMsg = streamingError ? ` (Error: ${streamingError})` : "";
           const sorry = `[System Message: All AI models are currently busy or unavailable.${errMsg} Please try again in a minute.]`;
@@ -337,7 +335,7 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
 
   res.end();
 
-  // 5. POST-STREAM: DB SAVE & TITLE GENERATION
+  // 5. POST-STREAM: DB SAVE
   if (fullReplyText) {
       try {
         const saveQ = `INSERT INTO chat_records (session_id, user_id, user_name, user_agent, ip_address, role, message_text, mode, model_used) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`;
