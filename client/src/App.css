@@ -204,6 +204,7 @@ body {
     .container { width: 100%; }
     .header h2 { margin-left: 50px; font-size: 1.2rem; }
 }
+
 /* --- TYPING INDICATOR ANIMATION --- */
 .typing-indicator {
   display: flex;
@@ -232,7 +233,6 @@ body {
   40% { transform: scale(1); }
 }
 
-/* Ensure the loading bubble isn't too small */
 .message.loading {
     min-height: 40px;
     display: flex;
