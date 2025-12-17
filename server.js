@@ -28,8 +28,7 @@ const SECRET_KEY = process.env.SECRET_KEY || "avneesh_super_secret_key";
 const OLLAMA_MODEL = "llama3.1:latest";
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
-// 👇 MODEL LIST: Using standard models. 
-// If 1.5-flash gives 404, your API Key might be restricted to specific regions or legacy projects.
+// Standard Gemini Models (If these fail with 404/429, it is a Google Account/Key restriction)
 const GEMINI_FALLBACK_ORDER = [
   "gemini-1.5-flash",
   "gemini-1.5-pro",
@@ -120,7 +119,6 @@ async function getOrCreateGuestUser() {
 async function generateSessionTitle(firstMessage) {
   const prompt = `Summarize this message into a short, catchy title (max 4 words). No quotes. Message: "${firstMessage}"`;
   
-  // 1. Try Ollama (Matches Chat Priority)
   if (OLLAMA_API_ENDPOINT) {
     try {
         const response = await fetch(OLLAMA_API_ENDPOINT, {
@@ -128,7 +126,6 @@ async function generateSessionTitle(firstMessage) {
             headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
             body: JSON.stringify({ model: OLLAMA_MODEL, prompt: prompt, stream: false }),
         });
-
         if (response.ok) {
             const data = await response.json();
             return data.response.replace(/["\n]/g, '').trim().substring(0, 50);
@@ -136,7 +133,6 @@ async function generateSessionTitle(firstMessage) {
     } catch (e) { /* Fallback */ }
   }
 
-  // 2. Try Gemini Fallback
   if (ai) {
     for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
@@ -194,7 +190,7 @@ app.get('/api/chat/:session_id', authenticateToken, async (req, res) => {
 });
 
 // ----------------------------------------------------------------------
-// 🚀 STREAMING CHAT ROUTE (BRACKET PARSER FIXED)
+// 🚀 STREAMING CHAT ROUTE (THE COMPRESSED STREAM FIX)
 // ----------------------------------------------------------------------
 app.post("/api/chat", optionalAuth, async (req, res) => {
   let { prompt, mode, history, session_id, user_name, user_agent } = req.body;
@@ -247,8 +243,7 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
   let streamingError = null;
 
   try {
-      // A. OLLAMA (WITH BRACKET COUNTER PARSER)
-      // This works even if newlines are missing or data is chunked weirdly
+      // A. OLLAMA (WITH COMPRESSED STREAM FIX)
       if (OLLAMA_API_ENDPOINT) {
         try {
              let ollamaPrompt = `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n${systemInstruction}<|eot_id|>\n`;
@@ -265,34 +260,37 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
                  modelUsed = OLLAMA_MODEL;
                  
                  let buffer = "";
-                 let depth = 0; // Tracks { and }
-                 
                  for await (const chunk of response.body) {
-                     const text = chunk.toString();
-                     
-                     for (let i = 0; i < text.length; i++) {
-                         const char = text[i];
-                         buffer += char;
-                         
-                         if (char === '{') {
-                             depth++;
-                         } else if (char === '}') {
-                             depth--;
-                             // If depth hits 0, we have a potentially valid JSON object
-                             if (depth === 0) {
-                                 try {
-                                     const json = JSON.parse(buffer);
-                                     if (json.response) {
-                                         res.write(json.response);
-                                         fullReplyText += json.response;
-                                     }
-                                     buffer = ""; // Reset buffer only on success
-                                 } catch (e) {
-                                     // JSON parse failed (maybe just a brace inside a string?), keep buffering
-                                 }
+                     // 1. Append Chunk
+                     buffer += chunk.toString();
+
+                     // 2. THE FIX: FORCE SPLIT STUCK OBJECTS "}{" -> "}\n{"
+                     // This fixes the issue where tunnels strip newlines
+                     const cleanBuffer = buffer.replace(/}\s*{/g, "}\n{");
+
+                     const lines = cleanBuffer.split("\n");
+                     buffer = lines.pop(); // Keep the last incomplete piece
+
+                     for (const line of lines) {
+                         if (!line.trim()) continue;
+                         try {
+                             const json = JSON.parse(line);
+                             if (json.response) {
+                                 res.write(json.response);
+                                 fullReplyText += json.response;
                              }
+                         } catch(e) {
+                            // If JSON fails, ignore line
                          }
                      }
+                 }
+                 
+                 // 3. Flush final buffer
+                 if (buffer.trim()) {
+                     try {
+                         const json = JSON.parse(buffer);
+                         if (json.response) { res.write(json.response); fullReplyText += json.response; }
+                     } catch(e) {}
                  }
              }
         } catch (e) { console.log("Ollama Skipped"); }
@@ -327,7 +325,6 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
          }
       }
 
-      // ERROR REPORTING
       if (!fullReplyText) {
           const errMsg = streamingError ? ` (Error: ${streamingError})` : "";
           const sorry = `[System Message: All AI models are currently busy or unavailable.${errMsg} Please try again in a minute.]`;
@@ -342,7 +339,7 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
 
   res.end();
 
-  // 5. POST-STREAM: DB SAVE & TITLE
+  // 5. POST-STREAM: DB SAVE
   if (fullReplyText) {
       try {
         const saveQ = `INSERT INTO chat_records (session_id, user_id, user_name, user_agent, ip_address, role, message_text, mode, model_used) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`;
