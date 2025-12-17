@@ -246,7 +246,7 @@ function App() {
 
       // 2. SETUP STREAM READER
       const reader = response.body.getReader();
-      constdecoder = new TextDecoder();
+      const decoder = new TextDecoder();
       let accumulatedText = "";
 
       // 3. READ STREAM LOOP
