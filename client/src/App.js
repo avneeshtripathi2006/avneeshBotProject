@@ -49,11 +49,11 @@ const AuthView = ({ onLoginSuccess, onGuestLogin }) => {
 };
 
 function App() {
-    // --- 1. STATE INITIALIZATION (Read from Storage) ---
+    // --- 1. STATE INITIALIZATION ---
     const [token, setToken] = useState(localStorage.getItem('token'));
     const [userName, setUserName] = useState(localStorage.getItem('userName') || "User");
     
-    // FIX: Read the last active session from storage so we don't lose it on refresh
+    // Initialize activeSessionId from storage
     const [activeSessionId, setActiveSessionId] = useState(() => {
         const saved = localStorage.getItem('lastSessionId');
         return saved ? Number(saved) : null;
@@ -74,8 +74,7 @@ function App() {
     const [tempGuestId] = useState("guest-" + Date.now());
     const chatBoxRef = useRef(null);
 
-    // --- 2. PERSISTENCE EFFECTS ---
-    // Whenever activeSessionId changes, save it to localStorage
+    // --- 2. PERSISTENCE ---
     useEffect(() => {
         if (activeSessionId) {
             localStorage.setItem('lastSessionId', activeSessionId);
@@ -86,7 +85,7 @@ function App() {
     const handleLogout = useCallback(() => {
         localStorage.removeItem('token');
         localStorage.removeItem('userName');
-        localStorage.removeItem('lastSessionId'); // Clear session memory
+        localStorage.removeItem('lastSessionId');
         setToken(null);
         setUserName("User");
         setIsLoggedIn(false);
@@ -95,30 +94,29 @@ function App() {
         setActiveSessionId(null);
     }, []);
 
-    // FIX: Auto-Logout if token is invalid (401)
     const protectedFetch = useCallback(async (url, options = {}) => {
         const headers = { ...options.headers, 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = `Bearer ${token}`;
         
         const response = await fetch(url, { ...options, headers });
-        
         if (response.status === 401) {
-            handleLogout(); // Auto logout if session expired
+            handleLogout(); 
             return response;
         }
         return response;
     }, [token, handleLogout]);
 
-    // --- 4. DATA LOADING ---
+    // --- 4. DATA LOADING (DECOUPLED) ---
     
-    // Load Specific Chat History
+    // A. Load History (The Chat Messages)
     const loadSessionHistory = useCallback(async (sessionId, isInitialization = false) => {
         if (isGuest && !sessionId) return;
         
         setShowSidebar(false);
-        setActiveSessionId(sessionId); // This triggers the storage save
+        setActiveSessionId(sessionId);
         setIsLoading(true);
         
+        // Only clear history if user clicked explicitly (prevents flicker on refresh)
         if (!isInitialization) setChatHistory([]); 
         
         try {
@@ -136,47 +134,44 @@ function App() {
         finally { setIsLoading(false); }
     }, [isGuest, userName, protectedFetch]);
 
-    // Fetch Session List & Decide what to open
-    const fetchSessions = useCallback(async (shouldLoadHistory = false) => {
+    // B. Fetch Session List (The Sidebar)
+    const fetchSessions = useCallback(async () => {
         try {
             const res = await protectedFetch(`${API_BASE_URL}/sessions`);
             if (res.ok) {
                 const sessions = await res.json();
                 setSessionsList(sessions);
-                
-                if (shouldLoadHistory) {
-                    let sessionToLoad = null;
-                    
-                    // Priority 1: Use the restored ID from localStorage (activeSessionId)
-                    // But verify it exists in the fetched list to avoid stale IDs
-                    if (activeSessionId && sessions.some(s => s.session_id === activeSessionId)) {
-                        sessionToLoad = activeSessionId;
-                    } 
-                    // Priority 2: Use the most recent session
-                    else if (sessions.length > 0) {
-                        sessionToLoad = sessions[0].session_id;
-                    }
-
-                    if (sessionToLoad) {
-                        loadSessionHistory(sessionToLoad, true);
-                    } else if (sessions.length === 0) {
-                        // Correctly handle empty state
-                        setChatHistory([]);
-                    }
-                }
+                return sessions; // Return data for chaining
             }
         } catch (e) { console.error("Fetch sessions failed", e); }
-    }, [protectedFetch, activeSessionId, loadSessionHistory]);
+        return [];
+    }, [protectedFetch]);
 
-    // Initialization Effect
+    // --- 5. INITIALIZATION LOGIC (THE FIX) ---
     useEffect(() => {
-        if (token && !isGuest) {
-            setIsLoggedIn(true);
-            fetchSessions(true); 
-        }
-    }, [token, isGuest, fetchSessions]); 
+        const init = async () => {
+            if (token && !isGuest) {
+                setIsLoggedIn(true);
 
-    // --- 5. USER ACTIONS ---
+                // STEP 1: If we remember the last session, LOAD IT IMMEDIATELY
+                // We do not wait for the list. We trust the storage.
+                if (activeSessionId) {
+                    loadSessionHistory(activeSessionId, true);
+                }
+
+                // STEP 2: Fetch the list in parallel/after
+                const sessions = await fetchSessions();
+
+                // STEP 3: Fallback - If no active session was stored, open the most recent one
+                if (!activeSessionId && sessions && sessions.length > 0) {
+                    loadSessionHistory(sessions[0].session_id, true);
+                }
+            }
+        };
+        init();
+    }, [token, isGuest]); // Run once on auth state change
+
+    // --- 6. USER ACTIONS ---
     const handleLoginSuccess = (receivedToken, dbUsername) => {
         localStorage.setItem('token', receivedToken);
         localStorage.setItem('userName', dbUsername);
@@ -212,6 +207,7 @@ function App() {
         }
     };
 
+    // --- 7. STREAMING CHAT ---
     const generateAIResponse = async () => {
         if (!userInput.trim() || isLoading) return;
         
@@ -259,8 +255,8 @@ function App() {
             accumulatedText += decoder.decode(); 
             setChatHistory(prev => prev.map(msg => msg.id === loaderId ? { ...msg, text: accumulatedText } : msg));
 
-            // Refresh title list, but don't reload history (avoids vanishing/glitch)
-            if (!isGuest) fetchSessions(false);
+            // Refresh Title List (Silent update)
+            if (!isGuest) fetchSessions();
 
         } catch (error) {
             setChatHistory(prev => prev.map(msg => msg.id === loaderId ? { role: "model", text: "⚠️ Connection Error." } : msg));
@@ -284,7 +280,7 @@ function App() {
                         {isGuest ? <div style={{padding:'15px', color:'#888', fontStyle:'italic'}}>Guest Mode</div> : 
                         <div className="session-list">
                             {sessionsList.map(s => (
-                                <div key={s.session_id} className={`session-item ${s.session_id === activeSessionId ? 'active' : ''}`} onClick={() => loadSessionHistory(s.session_id)}>
+                                <div key={s.session_id} className={`session-item ${Number(s.session_id) === Number(activeSessionId) ? 'active' : ''}`} onClick={() => loadSessionHistory(s.session_id)}>
                                     {s.session_name || "Chat"}
                                 </div>
                             ))}
@@ -295,7 +291,7 @@ function App() {
                     
                     <div className={`container mode-${currentMode}`}>
                         <div className="header">
-                            <h2>{isGuest ? "Guest Chat" : sessionsList.find(s => s.session_id === activeSessionId)?.session_name || "Avneesh Bot"}</h2>
+                            <h2>{isGuest ? "Guest Chat" : sessionsList.find(s => Number(s.session_id) === Number(activeSessionId))?.session_name || "Avneesh Bot"}</h2>
                             <select value={currentMode} onChange={(e) => setCurrentMode(e.target.value)}>
                                 <option value="casual">😎 Casual</option>
                                 <option value="roast">🔥 Roast</option>
