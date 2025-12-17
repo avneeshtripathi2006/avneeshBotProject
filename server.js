@@ -121,7 +121,7 @@ async function getOrCreateGuestUser() {
 async function generateSessionTitle(firstMessage) {
   const prompt = `Summarize this message into a short, catchy title (max 4 words). No quotes. Message: "${firstMessage}"`;
   
-  // 1. Try Ollama (Matches Chat Priority - No Timeout, waits for result)
+  // 1. Try Ollama 
   if (OLLAMA_API_ENDPOINT) {
     try {
         const response = await fetch(OLLAMA_API_ENDPOINT, {
@@ -137,7 +137,7 @@ async function generateSessionTitle(firstMessage) {
     } catch (e) { /* Ollama unreachable? Fallback to Gemini */ }
   }
 
-  // 2. Try Gemini Fallback (Matches Chat Fallback Order)
+  // 2. Try Gemini Fallback
   if (ai) {
     for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
@@ -264,16 +264,13 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
              if (response.ok && response.body) {
                  modelUsed = OLLAMA_MODEL;
                  
-                 // 🛠️ BUG FIX: BUFFERING FOR OLLAMA
-                 // We must stitch partial chunks together before parsing
+                 // 🛠️ FINAL OLLAMA BUFFER FIX 🛠️
                  let buffer = "";
                  
                  for await (const chunk of response.body) {
-                     buffer += chunk.toString(); // Append chunk to buffer
-                     const lines = buffer.split("\n"); // Split by newlines
-                     
-                     // The last line might be incomplete, so save it back to buffer
-                     buffer = lines.pop();
+                     buffer += chunk.toString();
+                     const lines = buffer.split("\n"); 
+                     buffer = lines.pop(); // Save incomplete line back to buffer
 
                      for (const line of lines) {
                          if (!line.trim()) continue;
@@ -286,6 +283,19 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
                          } catch(e) { /* skip unparseable lines */ }
                      }
                  }
+                 
+                 // PROCESS FINAL REMAINING BUFFER CHUNK
+                 if (buffer.trim()) {
+                     try {
+                         const json = JSON.parse(buffer);
+                         if (json.response) {
+                             res.write(json.response);
+                             fullReplyText += json.response;
+                         }
+                     } catch (e) { /* Final piece lost or invalid */ }
+                 }
+                 
+                 
              }
         } catch (e) { /* Ollama fail silently */ }
       }
