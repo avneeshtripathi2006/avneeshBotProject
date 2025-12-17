@@ -26,6 +26,7 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const SECRET_KEY = process.env.SECRET_KEY || "avneesh_super_secret_key";
 
 const OLLAMA_MODEL = "llama3.1:latest";
+// Only set endpoint if URL is valid/present
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
 const GEMINI_FALLBACK_ORDER = [
@@ -107,7 +108,7 @@ async function getOrCreateGuestUser() {
 
         const hash = await bcrypt.hash("guest_cannot_login", 10);
         res = await pool.query(
-            "INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING user_id",
+            "INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING user_id, username",
             ["System Guest", "guest@system.local", hash]
         );
         console.log("✅ System Guest User Created with ID:", res.rows[0].user_id);
@@ -121,20 +122,28 @@ async function getOrCreateGuestUser() {
 async function generateSessionTitle(firstMessage) {
   const prompt = `Summarize this message into a short, catchy title (max 4 words). No quotes. Message: "${firstMessage}"`;
   
+  // Try Ollama First (With Timeout)
   if (OLLAMA_API_ENDPOINT) {
     try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s timeout for Ollama
+
         const response = await fetch(OLLAMA_API_ENDPOINT, {
             method: "POST",
             headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
             body: JSON.stringify({ model: OLLAMA_MODEL, prompt: prompt, stream: false }),
+            signal: controller.signal
         });
+        clearTimeout(timeoutId);
+
         if (response.ok) {
             const data = await response.json();
             return data.response.replace(/["\n]/g, '').trim().substring(0, 50);
         }
-    } catch (e) { /* ignore */ }
+    } catch (e) { /* ignore ollama failure */ }
   }
 
+  // Try Gemini Fallback
   if (ai) {
     for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
@@ -271,7 +280,7 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
                      } catch(e) { /* ignore buffer splits */ }
                  }
              }
-        } catch (e) { console.log("Ollama Stream Failed, trying Gemini"); }
+        } catch (e) { /* Ollama fail silently */ }
       }
 
       if (!fullReplyText && ai) {
@@ -305,7 +314,7 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
 
   res.end();
 
-  // 5. POST-STREAM: DB SAVE
+  // 5. POST-STREAM: DB SAVE & TITLE GENERATION
   if (fullReplyText) {
       try {
         const saveQ = `INSERT INTO chat_records (session_id, user_id, user_name, user_agent, ip_address, role, message_text, mode, model_used) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`;

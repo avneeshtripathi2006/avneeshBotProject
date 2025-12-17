@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import "./App.css";
 
 // ⚠️ CHANGE TO YOUR RENDER URL
@@ -49,11 +49,9 @@ const AuthView = ({ onLoginSuccess, onGuestLogin }) => {
 };
 
 function App() {
-    // --- 1. STATE INITIALIZATION ---
+    // --- STATE ---
     const [token, setToken] = useState(localStorage.getItem('token'));
     const [userName, setUserName] = useState(localStorage.getItem('userName') || "User");
-    
-    // Initialize activeSessionId from storage
     const [activeSessionId, setActiveSessionId] = useState(() => {
         const saved = localStorage.getItem('lastSessionId');
         return saved ? Number(saved) : null;
@@ -74,122 +72,99 @@ function App() {
     const [tempGuestId] = useState("guest-" + Date.now());
     const chatBoxRef = useRef(null);
 
-    // --- 2. PERSISTENCE ---
+    // --- EFFECT: PERSIST SESSION ID ---
     useEffect(() => {
-        if (activeSessionId) {
-            localStorage.setItem('lastSessionId', activeSessionId);
-        }
+        if (activeSessionId) localStorage.setItem('lastSessionId', activeSessionId);
     }, [activeSessionId]);
 
-    // --- 3. CORE HANDLERS ---
-    const handleLogout = useCallback(() => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('userName');
-        localStorage.removeItem('lastSessionId');
+    // --- AUTH HELPERS ---
+    const handleLogout = () => {
+        localStorage.clear(); 
         setToken(null);
         setUserName("User");
         setIsLoggedIn(false);
         setIsGuest(false);
         setChatHistory([]);
         setActiveSessionId(null);
-    }, []);
+    };
 
-    const protectedFetch = useCallback(async (url, options = {}) => {
+    // Generic Fetch Wrapper
+    const protectedFetch = async (url, options = {}) => {
         const headers = { ...options.headers, 'Content-Type': 'application/json' };
         if (token) headers['Authorization'] = `Bearer ${token}`;
         
-        const response = await fetch(url, { ...options, headers });
-        if (response.status === 401) {
-            handleLogout(); 
-            return response;
-        }
-        return response;
-    }, [token, handleLogout]);
-
-    // --- 4. DATA LOADING (DECOUPLED) ---
-    
-    // A. Load History (The Chat Messages)
-    const loadSessionHistory = useCallback(async (sessionId, isInitialization = false) => {
-        if (isGuest && !sessionId) return;
-        
-        setShowSidebar(false);
-        setActiveSessionId(sessionId);
-        setIsLoading(true);
-        
-        // Only clear history if user clicked explicitly (prevents flicker on refresh)
-        if (!isInitialization) setChatHistory([]); 
-        
         try {
-            const res = await protectedFetch(`${API_BASE_URL}/chat/${sessionId}`);
-            if (res.ok) {
+            const response = await fetch(url, { ...options, headers });
+            if (response.status === 401) {
+                handleLogout(); 
+                return null;
+            }
+            return response;
+        } catch (e) {
+            console.error("Fetch Error:", e);
+            return null;
+        }
+    };
+
+    // --- CORE LOGIC: LOAD CHAT ---
+    const loadSessionHistory = async (sessionId) => {
+        if (!sessionId) return;
+        
+        const numericId = Number(sessionId);
+        setActiveSessionId(numericId);
+        setShowSidebar(false);
+        setChatHistory([]); // Clear strictly on manual switch
+        setIsLoading(true);
+
+        try {
+            const res = await protectedFetch(`${API_BASE_URL}/chat/${numericId}`);
+            if (res && res.ok) {
                 const hist = await res.json();
                 const historyLoaded = hist.length ? hist.map(m => ({ role: m.role, text: m.content })) : [];
-                
                 if (historyLoaded.length === 0) {
                      historyLoaded.push({ role: "model", text: `Hello ${userName}! Start a topic.` });
                 }
                 setChatHistory(historyLoaded);
             }
-        } catch (e) { console.error("History load failed", e); }
-        finally { setIsLoading(false); }
-    }, [isGuest, userName, protectedFetch]);
+        } catch (e) {
+            console.error("Load History Failed:", e);
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
-    // B. Fetch Session List (The Sidebar)
-    const fetchSessions = useCallback(async () => {
+    // --- CORE LOGIC: INITIALIZE APP ---
+    const initAppData = async () => {
+        if (!token && !isGuest) return;
+        
         try {
             const res = await protectedFetch(`${API_BASE_URL}/sessions`);
-            if (res.ok) {
+            if (res && res.ok) {
                 const sessions = await res.json();
                 setSessionsList(sessions);
-                return sessions; // Return data for chaining
-            }
-        } catch (e) { console.error("Fetch sessions failed", e); }
-        return [];
-    }, [protectedFetch]);
 
-    // --- 5. INITIALIZATION LOGIC (THE FIX) ---
+                let targetId = null;
+                if (activeSessionId) targetId = activeSessionId;
+                else if (sessions.length > 0) targetId = sessions[0].session_id;
+
+                if (targetId) {
+                    await loadSessionHistory(targetId);
+                } else {
+                    setChatHistory([]);
+                }
+            }
+        } catch (e) {}
+    };
+
     useEffect(() => {
-        const init = async () => {
-            if (token && !isGuest) {
-                setIsLoggedIn(true);
+        if (isLoggedIn) {
+            initAppData();
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isLoggedIn]); 
 
-                // STEP 1: If we remember the last session, LOAD IT IMMEDIATELY
-                // We do not wait for the list. We trust the storage.
-                if (activeSessionId) {
-                    loadSessionHistory(activeSessionId, true);
-                }
 
-                // STEP 2: Fetch the list in parallel/after
-                const sessions = await fetchSessions();
-
-                // STEP 3: Fallback - If no active session was stored, open the most recent one
-                if (!activeSessionId && sessions && sessions.length > 0) {
-                    loadSessionHistory(sessions[0].session_id, true);
-                }
-            }
-        };
-        init();
-    }, [token, isGuest]); // Run once on auth state change
-
-    // --- 6. USER ACTIONS ---
-    const handleLoginSuccess = (receivedToken, dbUsername) => {
-        localStorage.setItem('token', receivedToken);
-        localStorage.setItem('userName', dbUsername);
-        setToken(receivedToken);
-        setUserName(dbUsername || "User");
-        setIsGuest(false);
-        setIsLoggedIn(true);
-    };
-
-    const handleGuestLogin = () => {
-        setIsGuest(true);
-        setIsLoggedIn(true);
-        const name = prompt("Hello Guest! Enter your name:") || "Guest";
-        setUserName(name);
-        setSessionsList([]);
-        setChatHistory([{ role: "model", text: `Hello ${name}!` }]);
-    };
-
+    // --- USER ACTIONS ---
     const startNewChat = async () => {
         setShowSidebar(false);
         if (isGuest) {
@@ -199,7 +174,7 @@ function App() {
         }
         
         const res = await protectedFetch(`${API_BASE_URL}/sessions`, { method: 'POST', body: JSON.stringify({ session_name: 'New Chat' }) });
-        if (res.ok) {
+        if (res && res.ok) {
             const data = await res.json();
             setSessionsList(prev => [data.session, ...prev]);
             setActiveSessionId(data.session.session_id);
@@ -207,7 +182,7 @@ function App() {
         }
     };
 
-    // --- 7. STREAMING CHAT ---
+    // --- STREAMING CHAT ---
     const generateAIResponse = async () => {
         if (!userInput.trim() || isLoading) return;
         
@@ -224,6 +199,9 @@ function App() {
         }
 
         try {
+            let currentSessionId = activeSessionId;
+            if (!isGuest && !currentSessionId) currentSessionId = null;
+
             const response = await protectedFetch(`${API_BASE_URL}/chat`, {
                 method: "POST",
                 body: JSON.stringify({
@@ -231,13 +209,19 @@ function App() {
                     mode: currentMode,
                     user_name: userName,
                     user_agent: userAgent,
-                    session_id: isGuest ? (activeSessionId || tempGuestId) : activeSessionId,
+                    session_id: isGuest ? (currentSessionId || tempGuestId) : currentSessionId,
                     history: isGuest ? historyPayload : []
                 }),
             });
 
+            if (!response) throw new Error("Network Error");
+
             const newSessionId = response.headers.get("x-session-id");
-            if (newSessionId && isGuest) setActiveSessionId(Number(newSessionId));
+            if (newSessionId) {
+                const numId = Number(newSessionId);
+                setActiveSessionId(numId);
+                localStorage.setItem('lastSessionId', numId);
+            }
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
@@ -255,8 +239,17 @@ function App() {
             accumulatedText += decoder.decode(); 
             setChatHistory(prev => prev.map(msg => msg.id === loaderId ? { ...msg, text: accumulatedText } : msg));
 
-            // Refresh Title List (Silent update)
-            if (!isGuest) fetchSessions();
+            // FIX: Refresh Titles immediately...
+            if (!isGuest) {
+                const res = await protectedFetch(`${API_BASE_URL}/sessions`);
+                if (res && res.ok) setSessionsList(await res.json());
+
+                // ...AND AGAIN after 3 seconds to catch the background title update
+                setTimeout(async () => {
+                    const resDelay = await protectedFetch(`${API_BASE_URL}/sessions`);
+                    if (resDelay && resDelay.ok) setSessionsList(await resDelay.json());
+                }, 3000);
+            }
 
         } catch (error) {
             setChatHistory(prev => prev.map(msg => msg.id === loaderId ? { role: "model", text: "⚠️ Connection Error." } : msg));
@@ -264,6 +257,25 @@ function App() {
     };
 
     useEffect(() => { if (chatBoxRef.current) chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight; }, [chatHistory]);
+
+    // --- RENDER HELPERS ---
+    const handleLoginSuccess = (receivedToken, dbUsername) => {
+        localStorage.setItem('token', receivedToken);
+        localStorage.setItem('userName', dbUsername);
+        setToken(receivedToken);
+        setUserName(dbUsername || "User");
+        setIsGuest(false);
+        setIsLoggedIn(true);
+    };
+
+    const handleGuestLogin = () => {
+        setIsGuest(true);
+        setIsLoggedIn(true);
+        const name = prompt("Hello Guest! Enter your name:") || "Guest";
+        setUserName(name);
+        setSessionsList([]);
+        setChatHistory([{ role: "model", text: `Hello ${name}!` }]);
+    };
 
     return (
         <div className={`app-wrapper ${!isLoggedIn ? 'auth-view' : 'chat-view'}`}>
