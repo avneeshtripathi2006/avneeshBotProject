@@ -28,11 +28,11 @@ const SECRET_KEY = process.env.SECRET_KEY || "avneesh_super_secret_key";
 const OLLAMA_MODEL = "llama3.1:latest";
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
-// Standard Gemini Models (If these fail with 404/429, it is a Google Account/Key restriction)
+// Gemini Fallback Models
 const GEMINI_FALLBACK_ORDER = [
+  "gemini-2.0-flash-exp", 
   "gemini-1.5-flash",
-  "gemini-1.5-pro",
-  "gemini-1.0-pro"
+  "gemini-1.5-pro"
 ];
 
 const ai = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
@@ -119,6 +119,7 @@ async function getOrCreateGuestUser() {
 async function generateSessionTitle(firstMessage) {
   const prompt = `Summarize this message into a short, catchy title (max 4 words). No quotes. Message: "${firstMessage}"`;
   
+  // 1. Try Ollama 
   if (OLLAMA_API_ENDPOINT) {
     try {
         const response = await fetch(OLLAMA_API_ENDPOINT, {
@@ -133,6 +134,7 @@ async function generateSessionTitle(firstMessage) {
     } catch (e) { /* Fallback */ }
   }
 
+  // 2. Try Gemini Fallback
   if (ai) {
     for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
@@ -190,7 +192,7 @@ app.get('/api/chat/:session_id', authenticateToken, async (req, res) => {
 });
 
 // ----------------------------------------------------------------------
-// 🚀 STREAMING CHAT ROUTE (THE COMPRESSED STREAM FIX)
+// 🚀 STREAMING CHAT ROUTE (THE ULTIMATE DEBUG VERSION)
 // ----------------------------------------------------------------------
 app.post("/api/chat", optionalAuth, async (req, res) => {
   let { prompt, mode, history, session_id, user_name, user_agent } = req.body;
@@ -241,9 +243,10 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
   let fullReplyText = "";
   let modelUsed = "none";
   let streamingError = null;
+  let rawBufferCapture = ""; // Used for debugging
 
   try {
-      // A. OLLAMA (WITH COMPRESSED STREAM FIX)
+      // A. OLLAMA
       if (OLLAMA_API_ENDPOINT) {
         try {
              let ollamaPrompt = `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n${systemInstruction}<|eot_id|>\n`;
@@ -261,15 +264,16 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
                  
                  let buffer = "";
                  for await (const chunk of response.body) {
-                     // 1. Append Chunk
-                     buffer += chunk.toString();
+                     const chunkStr = chunk.toString();
+                     buffer += chunkStr;
+                     rawBufferCapture += chunkStr; // Save everything to show user if it fails
 
-                     // 2. THE FIX: FORCE SPLIT STUCK OBJECTS "}{" -> "}\n{"
-                     // This fixes the issue where tunnels strip newlines
-                     const cleanBuffer = buffer.replace(/}\s*{/g, "}\n{");
-
-                     const lines = cleanBuffer.split("\n");
-                     buffer = lines.pop(); // Keep the last incomplete piece
+                     // --- PARSER V3: "Force Split" + "Regex Backup" ---
+                     
+                     // 1. Force add newlines between objects just in case
+                     let safeBuffer = buffer.replace(/}\s*{/g, "}\n{"); 
+                     const lines = safeBuffer.split("\n");
+                     buffer = lines.pop(); // Keep last incomplete piece
 
                      for (const line of lines) {
                          if (!line.trim()) continue;
@@ -279,18 +283,26 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
                                  res.write(json.response);
                                  fullReplyText += json.response;
                              }
-                         } catch(e) {
-                            // If JSON fails, ignore line
-                         }
+                         } catch(e) {}
                      }
                  }
                  
-                 // 3. Flush final buffer
+                 // 2. Final Buffer Flush
                  if (buffer.trim()) {
                      try {
                          const json = JSON.parse(buffer);
                          if (json.response) { res.write(json.response); fullReplyText += json.response; }
-                     } catch(e) {}
+                     } catch(e) {
+                         // 3. REGEX FALLBACK (If JSON is completely broken)
+                         const match = rawBufferCapture.match(/"response"\s*:\s*"([^"]*?)"/g);
+                         if (match && !fullReplyText) {
+                             // Try to extract from raw dump
+                             match.forEach(m => {
+                                 const txt = m.replace(/"response"\s*:\s*"/, "").replace(/"$/, "");
+                                 if (txt) { res.write(txt); fullReplyText += txt; }
+                             });
+                         }
+                     }
                  }
              }
         } catch (e) { console.log("Ollama Skipped"); }
@@ -327,7 +339,10 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
 
       if (!fullReplyText) {
           const errMsg = streamingError ? ` (Error: ${streamingError})` : "";
-          const sorry = `[System Message: All AI models are currently busy or unavailable.${errMsg} Please try again in a minute.]`;
+          // ⚠️ DEBUG MODE: Show the raw data received from Ollama to the user
+          const debugData = rawBufferCapture ? `\n\n[DEBUG: RAW DATA RECEIVED: ${rawBufferCapture.substring(0, 100)}...]` : "";
+          
+          const sorry = `[System Message: No response generated. ${errMsg}${debugData}]`;
           res.write(sorry);
           fullReplyText = sorry;
       }
