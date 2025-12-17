@@ -263,15 +263,28 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
 
              if (response.ok && response.body) {
                  modelUsed = OLLAMA_MODEL;
+                 
+                 // 🛠️ BUG FIX: BUFFERING FOR OLLAMA
+                 // We must stitch partial chunks together before parsing
+                 let buffer = "";
+                 
                  for await (const chunk of response.body) {
-                     const jsonStr = chunk.toString();
-                     try {
-                         const json = JSON.parse(jsonStr);
-                         if (json.response) {
-                             res.write(json.response);
-                             fullReplyText += json.response;
-                         }
-                     } catch(e) { /* ignore buffer splits */ }
+                     buffer += chunk.toString(); // Append chunk to buffer
+                     const lines = buffer.split("\n"); // Split by newlines
+                     
+                     // The last line might be incomplete, so save it back to buffer
+                     buffer = lines.pop();
+
+                     for (const line of lines) {
+                         if (!line.trim()) continue;
+                         try {
+                             const json = JSON.parse(line);
+                             if (json.response) {
+                                 res.write(json.response);
+                                 fullReplyText += json.response;
+                             }
+                         } catch(e) { /* skip unparseable lines */ }
+                     }
                  }
              }
         } catch (e) { /* Ollama fail silently */ }
