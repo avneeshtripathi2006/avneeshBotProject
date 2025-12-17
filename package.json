@@ -11,7 +11,6 @@
     "start:dev": "concurrently \"npm run server\" \"npm run client\""
   },
   "dependencies": {
-    "@google/genai": "^0.15.0",
     "@google/generative-ai": "^0.24.1",
     "bcryptjs": "^3.0.3",
     "concurrently": "^8.2.2",

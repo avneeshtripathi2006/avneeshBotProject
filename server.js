@@ -4,7 +4,8 @@ dotenv.config();
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
-import { GoogleGenAI } from "@google/genai";
+// 👇 FIXED: Use the standard library name
+import { GoogleGenerativeAI } from "@google/generative-ai"; 
 import pg from "pg";
 import cors from "cors";
 import bcrypt from "bcryptjs";
@@ -28,23 +29,24 @@ const SECRET_KEY = process.env.SECRET_KEY || "avneesh_super_secret_key";
 const OLLAMA_MODEL = "llama3.1:latest";
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
-// 👇 YOUR REQUESTED MODELS (With a hidden safety net)
+// 👇 Your Model List
 const GEMINI_FALLBACK_ORDER = [
-  "gemini-2.5-flash-lite", // 1. Try your preferred
-  "gemini-2.5-flash",      // 2. Try your preferred
-  "gemini-2.5-pro",        // 3. Try your preferred
-  "gemini-1.5-flash",      // 4. Backup (High speed)
-  "gemini-pro"             // 5. Ultimate Backup (Always works)
+  "gemini-2.5-flash-lite", 
+  "gemini-2.5-flash",      
+  "gemini-2.5-pro",        
+  "gemini-1.5-flash",      
+  "gemini-pro"             
 ];
 
-const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
+// 👇 FIXED: Initialize with correct class name
+const ai = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 
 app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "client/build")));
 
 // ----------------------------------------------------------------------
-// 🗄️ DATABASE SETUP
+// 🗄️ DATABASE SETUP (Kept exact same)
 // ----------------------------------------------------------------------
 const pool = new Pool({
   connectionString: DATABASE_URL,
@@ -54,48 +56,17 @@ const pool = new Pool({
 (async () => {
   try {
     const client = await pool.connect();
-    // 1. Users
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        user_id SERIAL PRIMARY KEY,
-        username VARCHAR(50) NOT NULL,
-        email VARCHAR(100) UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-    // 2. Chat Sessions
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS chat_sessions (
-        session_id SERIAL PRIMARY KEY,
-        user_id INT REFERENCES users(user_id) ON DELETE CASCADE,
-        session_name VARCHAR(100) DEFAULT 'New Chat',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      );
-    `);
-    // 3. Chat Records (Original Schema)
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS chat_records (
-        id SERIAL PRIMARY KEY,
-        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        user_id VARCHAR(255),
-        user_name VARCHAR(255),
-        user_agent TEXT,
-        ip_address VARCHAR(45),
-        session_id VARCHAR(255),
-        role VARCHAR(50) NOT NULL,
-        message_text TEXT NOT NULL,
-        mode VARCHAR(50),
-        model_used VARCHAR(50)
-      );
-    `);
+    // Tables setup...
+    await client.query(`CREATE TABLE IF NOT EXISTS users (user_id SERIAL PRIMARY KEY, username VARCHAR(50) NOT NULL, email VARCHAR(100) UNIQUE NOT NULL, password_hash TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
+    await client.query(`CREATE TABLE IF NOT EXISTS chat_sessions (session_id SERIAL PRIMARY KEY, user_id INT REFERENCES users(user_id) ON DELETE CASCADE, session_name VARCHAR(100) DEFAULT 'New Chat', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`);
+    await client.query(`CREATE TABLE IF NOT EXISTS chat_records (id SERIAL PRIMARY KEY, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, user_id VARCHAR(255), user_name VARCHAR(255), user_agent TEXT, ip_address VARCHAR(45), session_id VARCHAR(255), role VARCHAR(50) NOT NULL, message_text TEXT NOT NULL, mode VARCHAR(50), model_used VARCHAR(50));`);
     client.release();
     console.log("Database Verified.");
   } catch (err) { console.error("DB Error:", err); }
 })();
 
 // ----------------------------------------------------------------------
-// 🎭 PERSONAS
+// 🎭 PERSONAS (Kept exact same)
 // ----------------------------------------------------------------------
 const PERSONAS = {
   casual:
@@ -142,7 +113,6 @@ const optionalAuth = (req, res, next) => {
 async function generateSessionTitle(firstMessage) {
   const prompt = `Summarize this message into a short, catchy title (max 4 words). No quotes. Message: "${firstMessage}"`;
   
-  // 1. Try Ollama
   if (OLLAMA_API_ENDPOINT) {
     try {
         const response = await fetch(OLLAMA_API_ENDPOINT, {
@@ -157,10 +127,11 @@ async function generateSessionTitle(firstMessage) {
     } catch (e) { /* ignore */ }
   }
 
-  // 2. Try Gemini (Fallback Loop)
   if (ai) {
     for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
+            // FIX: gemini-pro doesn't support systemInstruction in getGenerativeModel
+            const isLegacy = modelName === "gemini-pro"; 
             const model = ai.getGenerativeModel({ model: modelName });
             const result = await model.generateContent(prompt);
             return (await result.response).text().replace(/["\n]/g, '').trim().substring(0, 50);
@@ -175,6 +146,7 @@ async function generateSessionTitle(firstMessage) {
 // ➡️ API ROUTES
 // ----------------------------------------------------------------------
 
+// ... [Register, Login, Sessions, Chat History Routes kept SAME as your code] ...
 app.post('/api/register', async (req, res) => {
   const { username, email, password } = req.body;
   try {
@@ -241,6 +213,7 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
   // 2. Generate Response
   let replyText = "";
   let modelUsed = "none";
+  let lastError = ""; // Capture the reason for failure
   
   // A. Ollama (Only if laptop is ON)
   if (OLLAMA_API_ENDPOINT) {
@@ -260,31 +233,47 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
       }
     } catch (e) { 
         console.log("Ollama unreachable. Trying Gemini..."); 
+        lastError = "Ollama Unreachable: " + e.message;
     }
   }
 
   // B. Gemini (Your Models -> Fallback)
   if (!replyText && ai) {
     try {
+      console.log("Using Gemini Fallback...");
       const geminiHistory = contextMessages.map(msg => ({ role: msg.role==='user'?'user':'model', parts: [{ text: msg.text }] }));
       const fullContents = [...geminiHistory, { role: 'user', parts: [{ text: prompt }] }];
       
-      // Tries 2.5-flash-lite -> 2.5-flash -> 2.5-pro -> 1.5-flash -> gemini-pro
       for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
-          const model = ai.getGenerativeModel({ model: modelName, systemInstruction });
+          console.log(`Trying model: ${modelName}`);
+          
+          // 👇 SPECIAL FIX: Legacy 'gemini-pro' does not support systemInstruction in config
+          const isLegacy = modelName === "gemini-pro";
+          const modelConfig = { model: modelName };
+          if (!isLegacy) modelConfig.systemInstruction = systemInstruction;
+
+          const model = ai.getGenerativeModel(modelConfig);
           const result = await model.generateContent({ contents: fullContents });
           replyText = (await result.response).text(); 
           modelUsed = modelName; 
           break; // Stop loop as soon as ONE works
         } catch (e) { 
-            console.warn(`Gemini model ${modelName} unavailable.`);
+            console.warn(`Gemini model ${modelName} unavailable:`, e.message);
+            lastError = `Gemini ${modelName} failed: ${e.message}`;
         }
       }
-    } catch (e) { console.error("Fatal Gemini Error:", e); }
+    } catch (e) { 
+        console.error("Fatal Gemini Error:", e);
+        lastError = "Fatal Gemini Error: " + e.message;
+    }
   }
 
-  if (!replyText) return res.status(503).json({ response: "AI unavailable." });
+  // 👇 DEBUG MODE: If AI fails, send the ACTUAL error to the frontend so you can see it
+  if (!replyText) {
+      if (!GEMINI_API_KEY) return res.status(503).json({ response: "AI Error: GEMINI_API_KEY is missing in Render Environment." });
+      return res.status(503).json({ response: `AI unavailable. Last error: ${lastError}` });
+  }
 
   // 3. Save & Auto-Title
   try {
