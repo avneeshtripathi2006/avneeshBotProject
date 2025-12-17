@@ -95,7 +95,8 @@ function App() {
         
         try {
             const response = await fetch(url, { ...options, headers });
-            if (response.status === 401) {
+            // Only auto-logout on 401 if we actually had a token
+            if (response.status === 401 && token) {
                 handleLogout(); 
                 return null;
             }
@@ -113,7 +114,7 @@ function App() {
         const numericId = Number(sessionId);
         setActiveSessionId(numericId);
         setShowSidebar(false);
-        setChatHistory([]); // Clear strictly on manual switch
+        setChatHistory([]); 
         setIsLoading(true);
 
         try {
@@ -135,7 +136,9 @@ function App() {
 
     // --- CORE LOGIC: INITIALIZE APP ---
     const initAppData = async () => {
-        if (!token && !isGuest) return;
+        // 🛑 FIX: If Guest, STOP here. Do not try to fetch sessions (you don't have permission)
+        if (isGuest) return; 
+        if (!token) return;
         
         try {
             const res = await protectedFetch(`${API_BASE_URL}/sessions`);
@@ -239,12 +242,12 @@ function App() {
             accumulatedText += decoder.decode(); 
             setChatHistory(prev => prev.map(msg => msg.id === loaderId ? { ...msg, text: accumulatedText } : msg));
 
-            // FIX: Refresh Titles immediately...
+            // Refresh Titles (Only for logged in users)
             if (!isGuest) {
                 const res = await protectedFetch(`${API_BASE_URL}/sessions`);
                 if (res && res.ok) setSessionsList(await res.json());
 
-                // ...AND AGAIN after 3 seconds to catch the background title update
+                // Delayed check for title update
                 setTimeout(async () => {
                     const resDelay = await protectedFetch(`${API_BASE_URL}/sessions`);
                     if (resDelay && resDelay.ok) setSessionsList(await resDelay.json());

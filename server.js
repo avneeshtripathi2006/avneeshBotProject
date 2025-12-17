@@ -26,7 +26,6 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const SECRET_KEY = process.env.SECRET_KEY || "avneesh_super_secret_key";
 
 const OLLAMA_MODEL = "llama3.1:latest";
-// Only set endpoint if URL is valid/present
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
 const GEMINI_FALLBACK_ORDER = [
@@ -122,28 +121,23 @@ async function getOrCreateGuestUser() {
 async function generateSessionTitle(firstMessage) {
   const prompt = `Summarize this message into a short, catchy title (max 4 words). No quotes. Message: "${firstMessage}"`;
   
-  // Try Ollama First (With Timeout)
+  // 1. Try Ollama (Matches Chat Priority - No Timeout, waits for result)
   if (OLLAMA_API_ENDPOINT) {
     try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 2000); // 2s timeout for Ollama
-
         const response = await fetch(OLLAMA_API_ENDPOINT, {
             method: "POST",
             headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
             body: JSON.stringify({ model: OLLAMA_MODEL, prompt: prompt, stream: false }),
-            signal: controller.signal
         });
-        clearTimeout(timeoutId);
 
         if (response.ok) {
             const data = await response.json();
             return data.response.replace(/["\n]/g, '').trim().substring(0, 50);
         }
-    } catch (e) { /* ignore ollama failure */ }
+    } catch (e) { /* Ollama unreachable? Fallback to Gemini */ }
   }
 
-  // Try Gemini Fallback
+  // 2. Try Gemini Fallback (Matches Chat Fallback Order)
   if (ai) {
     for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
