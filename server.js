@@ -28,11 +28,12 @@ const SECRET_KEY = process.env.SECRET_KEY || "avneesh_super_secret_key";
 const OLLAMA_MODEL = "llama3.1:latest";
 const OLLAMA_API_ENDPOINT = OLLAMA_URL ? `${OLLAMA_URL}/api/generate` : null;
 
+// 👇 UPDATED MODEL LIST: Standard models with higher quotas
 const GEMINI_FALLBACK_ORDER = [
-  "gemini-2.5-flash-lite",
-  "gemini-2.5-flash",
-  "gemini-2.5-pro",
   "gemini-1.5-flash",
+  "gemini-1.5-flash-latest",
+  "gemini-1.5-pro",
+  "gemini-1.5-pro-latest",
   "gemini-pro"
 ];
 
@@ -137,7 +138,7 @@ async function generateSessionTitle(firstMessage) {
     } catch (e) { /* Ollama unreachable? Fallback to Gemini */ }
   }
 
-  // 2. Try Gemini Fallback
+  // 2. Try Gemini Fallback 
   if (ai) {
     for (const modelName of GEMINI_FALLBACK_ORDER) {
         try {
@@ -247,8 +248,10 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
   // 4. STREAMING LOGIC
   let fullReplyText = "";
   let modelUsed = "none";
+  let streamingError = null;
 
   try {
+      // A. OLLAMA
       if (OLLAMA_API_ENDPOINT) {
         try {
              let ollamaPrompt = `<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n${systemInstruction}<|eot_id|>\n`;
@@ -263,15 +266,11 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
 
              if (response.ok && response.body) {
                  modelUsed = OLLAMA_MODEL;
-                 
-                 // 🛠️ FINAL OLLAMA BUFFER FIX 🛠️
                  let buffer = "";
-                 
                  for await (const chunk of response.body) {
                      buffer += chunk.toString();
                      const lines = buffer.split("\n"); 
-                     buffer = lines.pop(); // Save incomplete line back to buffer
-
+                     buffer = lines.pop(); // Hold incomplete line
                      for (const line of lines) {
                          if (!line.trim()) continue;
                          try {
@@ -280,26 +279,21 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
                                  res.write(json.response);
                                  fullReplyText += json.response;
                              }
-                         } catch(e) { /* skip unparseable lines */ }
+                         } catch(e) {}
                      }
                  }
-                 
-                 // PROCESS FINAL REMAINING BUFFER CHUNK
+                 // Flush remaining buffer
                  if (buffer.trim()) {
                      try {
                          const json = JSON.parse(buffer);
-                         if (json.response) {
-                             res.write(json.response);
-                             fullReplyText += json.response;
-                         }
-                     } catch (e) { /* Final piece lost or invalid */ }
+                         if (json.response) { res.write(json.response); fullReplyText += json.response; }
+                     } catch (e) {}
                  }
-                 
-                 
              }
-        } catch (e) { /* Ollama fail silently */ }
+        } catch (e) { console.log("Ollama Skipped"); }
       }
 
+      // B. GEMINI FALLBACK
       if (!fullReplyText && ai) {
          const geminiHistory = contextMessages.map(msg => ({ role: msg.role==='user'?'user':'model', parts: [{ text: msg.text }] }));
          const fullContents = [...geminiHistory, { role: 'user', parts: [{ text: prompt }] }];
@@ -319,14 +313,26 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
                     res.write(chunkText); 
                     fullReplyText += chunkText;
                 }
+                streamingError = null; 
                 break;
-            } catch (e) { console.warn(`Gemini ${modelName} stream failed:`, e.message); }
+            } catch (e) { 
+                console.warn(`Gemini ${modelName} failed:`, e.message); 
+                streamingError = e.message;
+            }
          }
+      }
+
+      // 🛠️ CRITICAL FIX: If ALL models fail, tell the frontend!
+      if (!fullReplyText) {
+          const errMsg = streamingError ? ` (Error: ${streamingError})` : "";
+          const sorry = `[System Message: All AI models are currently busy or unavailable.${errMsg} Please try again in a minute.]`;
+          res.write(sorry);
+          fullReplyText = sorry;
       }
 
   } catch (err) {
       console.error("Stream Error:", err);
-      res.write("\n[System Error: AI generation failed]");
+      res.write(`\n[System Error: ${err.message}]`);
   }
 
   res.end();
