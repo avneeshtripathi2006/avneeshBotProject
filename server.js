@@ -142,12 +142,17 @@ pool.on("error", (err) => {
  * @description Automatic Database Provisioning
  * Ensures all required tables exist in your CockroachDB cluster on startup.
  */
+/**
+ * @description Automatic Database Provisioning
+ * Ensures all required tables exist in your CockroachDB cluster on startup.
+ */
 (async () => {
+  let client;
   try {
-    const client = await pool.connect();
-    sysLogger('INFO', 'Synchronizing Users Schema...');
+    client = await pool.connect();
+    sysLogger('INFO', 'Synchronizing Database Schema...');
 
-    // FIX: Using 'password' instead of 'password_hash' to match your insert logic
+    // 1. Users Table
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY, 
@@ -158,10 +163,38 @@ pool.on("error", (err) => {
       );
     `);
 
-    client.release();
-    sysLogger('SUCCESS', 'User table verified.');
+    // 2. Chat Sessions Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS chat_sessions (
+        session_id SERIAL PRIMARY KEY,
+        user_id INT REFERENCES users(id),
+        session_name TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // 3. Chat Records Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS chat_records (
+        record_id SERIAL PRIMARY KEY,
+        session_id INT REFERENCES chat_sessions(session_id) ON DELETE CASCADE,
+        user_id INT,
+        user_name TEXT,
+        user_agent TEXT,
+        ip_address TEXT,
+        role TEXT,
+        message_text TEXT,
+        mode TEXT,
+        model_used TEXT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    sysLogger('SUCCESS', 'All Database tables verified and synchronized.');
   } catch (err) {
-    sysLogger('ERROR', 'Bootstrap Failure', err.message);
+    sysLogger('ERROR', 'Bootstrap Failure: Database could not be provisioned.', err.message);
+  } finally {
+    if (client) client.release();
   }
 })();
 
@@ -255,7 +288,7 @@ app.use(express.static(path.join(__dirname, "client/build")));
 
 // The catch-all route: If a request doesn't match an API route, send the React App
 app.get("*", (req, res) => {
-    res.sendFile(path.join(__dirname, "client/build", "index.html"));
+  res.sendFile(path.join(__dirname, "client/build", "index.html"));
 });
 
 /**
@@ -331,7 +364,7 @@ const validateLogin = (data) => {
  */
 app.post("/api/register", async (req, res) => {
   const { username, email, password } = req.body;
-  
+
   try {
     const hashedPassword = await bcrypt.hash(password, CONFIG.BCRYPT_SALT);
     // FIX: Use the 'password' column name
@@ -342,7 +375,13 @@ app.post("/api/register", async (req, res) => {
     res.status(201).json({ status: "success", user: newUser.rows[0] });
   } catch (err) {
     sysLogger("ERROR", "Registration Engine Failure", err.message);
-    res.status(500).json({ status: "error", message: "Internal Server Error: The registration pipeline encountered an obstacle." });
+    res
+      .status(500)
+      .json({
+        status: "error",
+        message:
+          "Internal Server Error: The registration pipeline encountered an obstacle.",
+      });
   }
 });
 /**
@@ -607,7 +646,7 @@ app.post("/api/chat", optionalAuth, async (req, res) => {
     }
   }
 
-  const systemInstruction = PERSONAS[mode] || PERSONAS.casual;
+  const systemInstruction = getSystemPrompt(mode, user_name);
   const ipAddress = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
   let fullReplyText = "";
   let modelUsed = "none";
@@ -843,7 +882,6 @@ process.on("SIGINT", () => initiateGracefulShutdown("SIGINT"));
  * 🚀 14. SERVER BOOTSTRAP
  * ======================================================================
  */
-
 const serverInstance = app.listen(CONFIG.PORT, () => {
   sysLogger("SUCCESS", `------------------------------------------------`);
   sysLogger("SUCCESS", `🚀 AVNEESH BOT PROJECT IS LIVE`);
