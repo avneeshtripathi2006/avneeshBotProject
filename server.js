@@ -17,6 +17,11 @@
  * 📦 1. EXTERNAL MODULE IMPORTS
  * ======================================================================
  */
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -245,6 +250,17 @@ app.use(
 
 app.use(express.json({ limit: "50mb" })); // Increased limit for large prompts/images
 app.use(express.urlencoded({ extended: true }));
+
+/**
+ * 📂 FRONTEND HOSTING LOGIC
+ * This tells Express to serve the built React files from the 'client/build' folder.
+ */
+app.use(express.static(path.join(__dirname, "client/build")));
+
+// The catch-all route: If a request doesn't match an API route, send the React App
+app.get("*", (req, res) => {
+    res.sendFile(path.join(__dirname, "client/build", "index.html"));
+});
 
 /**
  * Route Logging:
