@@ -145,27 +145,23 @@ pool.on("error", (err) => {
 (async () => {
   try {
     const client = await pool.connect();
-    sysLogger("INFO", "Verifying Database Schema Integrity...");
+    sysLogger('INFO', 'Synchronizing Users Schema...');
 
-    // 1. Users Table (id, username, email, password)
-    await client.query(
-      `CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(50) NOT NULL, email VARCHAR(100) UNIQUE NOT NULL, password TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`
-    );
-
-    // 2. Sessions Table (session_id, user_id, session_name)
-    await client.query(
-      `CREATE TABLE IF NOT EXISTS chat_sessions (session_id SERIAL PRIMARY KEY, user_id INT REFERENCES users(id) ON DELETE CASCADE, session_name VARCHAR(100) DEFAULT 'New Chat', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);`
-    );
-
-    // 3. Records Table (message_text, role, session_id)
-    await client.query(
-      `CREATE TABLE IF NOT EXISTS chat_records (id SERIAL PRIMARY KEY, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, user_id INT REFERENCES users(id), user_name VARCHAR(255), user_agent TEXT, ip_address VARCHAR(45), session_id INT REFERENCES chat_sessions(session_id) ON DELETE CASCADE, role VARCHAR(50) NOT NULL, message_text TEXT NOT NULL, mode VARCHAR(50), model_used VARCHAR(50));`
-    );
+    // FIX: Using 'password' instead of 'password_hash' to match your insert logic
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY, 
+        username VARCHAR(50) NOT NULL, 
+        email VARCHAR(100) UNIQUE NOT NULL, 
+        password TEXT NOT NULL, 
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
 
     client.release();
-    sysLogger("SUCCESS", "Database Bootstrap Complete. Schema is ready.");
+    sysLogger('SUCCESS', 'User table verified.');
   } catch (err) {
-    sysLogger("ERROR", "Critical Database Initialization Failure", err.message);
+    sysLogger('ERROR', 'Bootstrap Failure', err.message);
   }
 })();
 
@@ -335,73 +331,20 @@ const validateLogin = (data) => {
  */
 app.post("/api/register", async (req, res) => {
   const { username, email, password } = req.body;
-
-  sysLogger("INFO", `Registration attempt initiated for email: ${email}`);
-
-  // 1. Granular Validation Logic
-  const validation = validateRegistration(req.body);
-  if (!validation.isValid) {
-    sysLogger(
-      "WARN",
-      `Registration validation failed: ${validation.errors.join(", ")}`
-    );
-    return res.status(400).json({
-      status: "fail",
-      errors: validation.errors,
-    });
-  }
-
+  
   try {
-    // 2. Identity Collision Check: Ensure email is unique within the cluster
-    const checkUser = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [email]
-    );
-    if (checkUser.rows.length > 0) {
-      sysLogger("WARN", `Duplicate registration attempt blocked for: ${email}`);
-      return res.status(409).json({
-        status: "error",
-        message:
-          "Credential collision: This email is already associated with an account.",
-      });
-    }
-
-    // 3. Password Transformation: Apply Bcrypt salt and hash
-    sysLogger("INFO", "Applying one-way hashing to sensitive credentials...");
     const hashedPassword = await bcrypt.hash(password, CONFIG.BCRYPT_SALT);
-
-    // 4. Persistence: Commit user data to CockroachDB
+    // FIX: Use the 'password' column name
     const newUser = await pool.query(
-      "INSERT INTO users (username, email, password, created_at) VALUES ($1, $2, $3, NOW()) RETURNING id, username, email",
+      "INSERT INTO users (username, email, password, created_at) VALUES ($1, $2, $3, NOW()) RETURNING id, username",
       [username, email, hashedPassword]
     );
-
-    sysLogger(
-      "SUCCESS",
-      `Account successfully provisioned for: ${username} (ID: ${newUser.rows[0].id})`
-    );
-
-    // 5. Response Dispatch
-    res.status(201).json({
-      status: "success",
-      message: "Developer account initialized successfully.",
-      user: {
-        id: newUser.rows[0].id,
-        username: newUser.rows[0].username,
-        email: newUser.rows[0].email,
-      },
-    });
+    res.status(201).json({ status: "success", user: newUser.rows[0] });
   } catch (err) {
     sysLogger("ERROR", "Registration Engine Failure", err.message);
-    res.status(500).json({
-      status: "error",
-      message:
-        "Internal Server Error: The registration pipeline encountered an obstacle.",
-      technical_details: CONFIG.NODE_ENV === "development" ? err.message : null,
-    });
+    res.status(500).json({ status: "error", message: "Internal Server Error: The registration pipeline encountered an obstacle." });
   }
 });
-
 /**
  * @route   POST /api/login
  * @desc    Authenticate user and return a JWT for future requests.
