@@ -1,158 +1,130 @@
 /**
  * @file server.js
- * @description Core Backend Engine for the Avneesh Bot Project.
- * @author Avneesh Tripathi (CSE student, Kanpur)
- * @version 2.5.0
- * @stack Node.js, Express, CockroachDB, Gemini, Ollama
- * * ----------------------------------------------------------------------
- * DESIGN PHILOSOPHY:
- * This server implements a robust, asynchronous architecture designed for
- * high availability on Render. It utilizes a connection pool for
- * CockroachDB to minimize latency and a multi-layered middleware
- * stack for security and logging.
+ * @description Enterprise-Grade Multi-Model AI Engine for the Avneesh Bot Project.
+ * @author Avneesh Tripathi (Software Engineering Student, Kanpur)
+ * @version 3.7.1
  * ----------------------------------------------------------------------
+ * DESIGN PHILOSOPHY:
+ * 1. Waterfall Failover: Local (Llama 3.1) -> Cloud (Gemini 3/2.5 Flash).
+ * 2. Identity Persistence: Robust JWT & Guest-session handling.
+ * 3. Schema Reliability: Cascade-linked tables for Kanpur Nagar Cluster.
  */
 
-/* * ======================================================================
+/* ======================================================================
  * 📦 1. EXTERNAL MODULE IMPORTS
- * ======================================================================
- */
+ * ====================================================================== */
 import path from "path";
 import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import pg from "pg";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import helmet from "helmet"; // Error fix: Ensure this is installed!
+import morgan from "morgan"; // Error fix: Ensure this is installed!
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import fs from "fs"; // For advanced logging to file if needed
 
-/* * ======================================================================
- * ⚙️ 2. ENVIRONMENT ORCHESTRATION & VALIDATION
- * ======================================================================
- */
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+/* ======================================================================
+ * ⚙️ 2. ENVIRONMENT ORCHESTRATION & GLOBAL CONFIG
+ * ====================================================================== */
 dotenv.config();
 
 /**
  * @constant CONFIG
- * @description Centralized configuration object to prevent hardcoding.
+ * @description Centralized configuration for the Kanpur Nagar cluster.
  */
 const CONFIG = {
   PORT: process.env.PORT || 5000,
-  NODE_ENV: process.env.NODE_ENV || "development",
-  SECRET_KEY: process.env.SECRET_KEY || "avneesh_tripathi_2025_secure_node",
+  SECRET_KEY: process.env.SECRET_KEY || "avneesh_tripathi_2026_secure_key",
   DATABASE_URL: process.env.DATABASE_URL,
   GEMINI_KEY: process.env.GEMINI_API_KEY,
-  OLLAMA_URL: process.env.OLLAMA_URL || "http://localhost:11434",
-  OLLAMA_MODEL: "llama3.1:latest",
-  BCRYPT_SALT: 12, // Standard rounds for 2025 security
-  JWT_EXPIRY: "7d",
+  OLLAMA_URL: process.env.OLLAMA_URL, 
+  OLLAMA_MODEL: "llama3.1:latest", 
+  BCRYPT_SALT: 12,
+  JWT_EXPIRY: "7d", // Extended to 7 days to stop those annoying "Expired" errors
+  CONTEXT_WINDOW: 15, // Remembers the last 15 messages
+  OLLAMA_TIMEOUT: 60000, // 45s to give your Lenovo time to process
 };
 
-const OLLAMA_API_ENDPOINT = CONFIG.OLLAMA_URL
-  ? `${CONFIG.OLLAMA_URL}/api/generate`
-  : null;
-const OLLAMA_MODEL = CONFIG.OLLAMA_MODEL;
-
-// Initialize Google AI with your API Key
+// Initialize Google AI with your 2026 Studio Models
 const ai = CONFIG.GEMINI_KEY ? new GoogleGenerativeAI(CONFIG.GEMINI_KEY) : null;
 
-// CRITICAL: Exit early if environment is misconfigured (CSE Best Practice)
-if (!CONFIG.DATABASE_URL) {
-  console.error("❌ CRITICAL ERROR: DATABASE_URL is missing in .env file.");
-  process.exit(1);
-}
-
-if (!CONFIG.GEMINI_KEY) {
-  console.warn(
-    "⚠️ WARNING: GEMINI_API_KEY is missing. System will rely on Ollama failover."
-  );
-}
-
-/* * ======================================================================
- * 🛠️ 3. ADVANCED UTILITY FUNCTIONS
- * ======================================================================
+/**
+ * 🌊 MULTI-TIER AI WATERFALL
+ * Prioritizing the newest models from your AI Studio.
  */
+const AI_WATERFALL = [
+  { id: "gemini-3-flash-preview", label: "Gemini 3.0 Flash", priority: 1 },
+  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", priority: 2 },
+  { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro", priority: 3 }
+];
+
+/* ======================================================================
+ * 🛠️ 3. SYSTEM UTILITIES & ADVANCED LOGGING
+ * ====================================================================== */
 
 /**
  * @function sysLogger
- * @description Enhanced console logger with timestamps and levels.
+ * @description Indian-standardized logging for your Kanpur development.
  */
 const sysLogger = (level, message, data = null) => {
-  const timestamp = new Date().toISOString();
-  const colors = {
-    INFO: "\x1b[34m",
-    WARN: "\x1b[33m",
-    ERROR: "\x1b[31m",
-    SUCCESS: "\x1b[32m",
-    RESET: "\x1b[0m",
+  const timestamp = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+  const colors = { 
+    INFO: "\x1b[34m", // Blue
+    WARN: "\x1b[33m", // Yellow
+    ERROR: "\x1b[31m", // Red
+    SUCCESS: "\x1b[32m", // Green
+    RESET: "\x1b[0m" 
   };
-
-  console.log(
-    `${colors[level]}[${timestamp}] [${level}] ${message}${colors.RESET}`
-  );
-  if (data && CONFIG.NODE_ENV === "development") {
-    console.dir(data, { depth: null });
+  
+  console.log(`${colors[level] || ""}[${timestamp}] [${level}] ${message}${colors.RESET || ""}`);
+  
+  if (data && process.env.NODE_ENV !== "production") {
+    console.dir(data, { depth: null, colors: true });
   }
 };
 
-/* * ======================================================================
- * 💾 4. DATABASE CONNECTION POOLING (COCKROACHDB)
- * ======================================================================
+/**
+ * @function formatErrorResponse
+ * @description Standardized JSON errors for your React frontend.
  */
+const formatErrorResponse = (res, statusCode, message, error = null) => {
+  if (error) sysLogger("ERROR", message, error.message);
+  return res.status(statusCode).json({
+    status: "error",
+    message,
+    timestamp: new Date().toISOString()
+  });
+};
+
+/* ======================================================================
+ * 💾 4. COCKROACHDB CLUSTER CONNECTION
+ * ====================================================================== */
 const { Pool } = pg;
 
-/**
- * @description The Pool allows us to reuse database connections, which is
- * essential for high-performance Node.js applications.
- */
 const pool = new Pool({
   connectionString: CONFIG.DATABASE_URL,
-  ssl: {
-    // Required for CockroachDB Serverless clusters
-    rejectUnauthorized: false,
-  },
-  max: 20, // Maximum number of clients in the pool
-  idleTimeoutMillis: 30000, // How long a client is allowed to remain idle
-  connectionTimeoutMillis: 5000, // How long to wait for a connection
-});
-
-// Event Listener: Log when a new client is connected to the pool
-pool.on("connect", () => {
-  sysLogger(
-    "INFO",
-    "New PostgreSQL client established connection to the cluster."
-  );
-});
-
-// Event Listener: Log database errors to prevent silent crashes
-pool.on("error", (err) => {
-  sysLogger(
-    "ERROR",
-    "Unexpected error on idle client in CockroachDB Pool",
-    err
-  );
+  ssl: { rejectUnauthorized: false }, 
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
 });
 
 /**
- * @description Automatic Database Provisioning
- * Ensures all required tables exist in your CockroachDB cluster on startup.
+ * @description Database Schema Sync
+ * Fixed: Added strict constraints to prevent empty messages.
  */
-/**
- * @description Automatic Database Provisioning
- * Ensures all required tables exist in your CockroachDB cluster on startup.
- */
-(async () => {
+const syncDatabaseSchema = async () => {
   let client;
   try {
     client = await pool.connect();
-    sysLogger('INFO', 'Synchronizing Database Schema...');
+    sysLogger('INFO', 'Synchronizing Kanpur Cluster Schema...');
 
-    // 1. Users Table
+    // 1. Users table (Added profile support)
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY, 
@@ -163,738 +135,539 @@ pool.on("error", (err) => {
       );
     `);
 
-    // 2. Chat Sessions Table
+    // 2. Chat Sessions (The core of your project)
     await client.query(`
       CREATE TABLE IF NOT EXISTS chat_sessions (
         session_id SERIAL PRIMARY KEY,
-        user_id INT REFERENCES users(id),
-        session_name TEXT,
+        user_id INT REFERENCES users(id) ON DELETE CASCADE,
+        session_name TEXT DEFAULT 'New Conversation',
+        is_summarized BOOLEAN DEFAULT FALSE,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
-    // 3. Chat Records Table
+    // 3. Chat Records (Memory store)
     await client.query(`
       CREATE TABLE IF NOT EXISTS chat_records (
         record_id SERIAL PRIMARY KEY,
         session_id INT REFERENCES chat_sessions(session_id) ON DELETE CASCADE,
         user_id INT,
         user_name TEXT,
-        user_agent TEXT,
-        ip_address TEXT,
-        role TEXT,
-        message_text TEXT,
+        role TEXT NOT NULL,
+        message_text TEXT NOT NULL,
         mode TEXT,
         model_used TEXT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
-    sysLogger('SUCCESS', 'All Database tables verified and synchronized.');
+    sysLogger('SUCCESS', 'Infrastructure and Database are synchronized.');
   } catch (err) {
-    sysLogger('ERROR', 'Bootstrap Failure: Database could not be provisioned.', err.message);
+    sysLogger('ERROR', 'Critical: Database handshaking failed.', err.message);
+    process.exit(1);
   } finally {
     if (client) client.release();
   }
-})();
+};
 
-/* * ======================================================================
- * 🛡️ 5. SECURITY MIDDLEWARE & AUTH UTILITIES
- * ======================================================================
+syncDatabaseSchema();
+/* ======================================================================
+ * 🚀 5. EXPRESS APP INITIALIZATION & SECURITY MIDDLEWARE
+ * ====================================================================== */
+const app = express(); // Defined here to resolve ReferenceErrors
+
+/**
+ * @description Enhanced Security Middleware Stack.
+ * Standardizes headers and logs every request for debugging in Kanpur.
  */
+app.use(helmet({ 
+  contentSecurityPolicy: false, // Required to allow local AI model tunnels
+  crossOriginEmbedderPolicy: false 
+}));
+app.use(morgan(':method :url :status :response-time ms')); // Log speed of login attempts
+app.use(cors({
+  origin: ["http://localhost:3000", "https://avneeshbotproject.onrender.com"],
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  credentials: true
+}));
+app.use(express.json({ limit: "50mb" })); //
+app.use(express.urlencoded({ extended: true, limit: "50mb" }));
+
+/* ======================================================================
+ * 🛡️ 6. ACCESS CONTROL & JWT SECURITY
+ * ====================================================================== */
 
 /**
  * @middleware authenticateToken
- * @description Intercepts requests to protected routes and verifies the JWT.
- * This is a standard security layer for full-stack applications.
+ * @description Strict verification to fix 'JWT Expired' loops.
  */
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1]; // Format: Bearer <token>
+  const token = authHeader && authHeader.split(" ")[1];
 
   if (!token) {
-    sysLogger("WARN", `Unauthorized access attempt to ${req.url}`);
-    return res.status(401).json({
-      status: "error",
-      message: "Authentication protocol failed: No token provided.",
-    });
+    sysLogger("WARN", `Access Blocked: No token at ${req.path}`);
+    return formatErrorResponse(res, 401, "Authentication Required: Please log in.");
   }
 
-  jwt.verify(token, CONFIG.SECRET_KEY, (err, user) => {
+  jwt.verify(token, CONFIG.SECRET_KEY, (err, decoded) => {
     if (err) {
-      sysLogger("ERROR", `JWT Verification failed for ${req.url}`, err.message);
-      return res.status(403).json({
-        status: "error",
-        message: "Security violation: Token is invalid or has expired.",
-      });
+      const isExpired = err.name === "TokenExpiredError";
+      sysLogger("ERROR", isExpired ? "Session Expired" : "Invalid Token");
+      return formatErrorResponse(res, 403, isExpired ? "Session Expired. Please re-login." : "Invalid Access Token.");
     }
-
-    // Inject the decoded user object (id, username) into the request
-    req.user = user;
+    req.user = decoded;
     next();
   });
 };
 
 /**
  * @middleware optionalAuth
- * @description Decodes JWT if present, but does not block the request if absent.
- * This enables the 'Guest Mode' feature for your bot.
+ * @description Crucial for 'Guest Mode' testing on your Lenovo IdeaPad.
  */
 const optionalAuth = (req, res, next) => {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
 
   if (!token) {
-    req.user = null; // No token? No problem, you're a guest.
+    req.user = null;
     return next();
   }
 
-  jwt.verify(token, CONFIG.SECRET_KEY, (err, user) => {
-    if (err) {
-      req.user = null; // Invalid token? Treat as guest.
-    } else {
-      req.user = user; // Valid token? You are Avneesh.
-    }
+  jwt.verify(token, CONFIG.SECRET_KEY, (err, decoded) => {
+    req.user = err ? null : decoded;
     next();
   });
 };
-/* * ======================================================================
- * 🚀 6. EXPRESS APP INITIALIZATION
- * ======================================================================
- */
-const app = express();
+
+/* ======================================================================
+ * 👤 7. IDENTITY MANAGEMENT (AUTH & GUESTS)
+ * ====================================================================== */
 
 /**
- * Middleware Stack:
- * 1. CORS: Allows your React frontend to communicate with this server.
- * 2. JSON Parser: Handles incoming JSON payloads from App.js.
- */
-app.use(
-  cors({
-    origin: "*", // In production, replace with your specific Render URL
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-session-id"],
-  })
-);
-
-app.use(express.json({ limit: "50mb" })); // Increased limit for large prompts/images
-app.use(express.urlencoded({ extended: true }));
-
-/**
- * 📂 FRONTEND HOSTING LOGIC
- * This tells Express to serve the built React files from the 'client/build' folder.
- */
-app.use(express.static(path.join(__dirname, "client/build")));
-
-// The catch-all route: If a request doesn't match an API route, send the React App
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "client/build", "index.html"));
-});
-
-/**
- * Route Logging:
- * Monitors every single interaction for development transparency.
- */
-app.use((req, res, next) => {
-  sysLogger("INFO", `${req.method} Request received for ${req.path}`);
-  next();
-});
-
-/* * ======================================================================
- * 🧪 7. HEALTH CHECK & SYSTEM READINESS
- * ======================================================================
- */
-app.get("/api/health", async (req, res) => {
-  try {
-    const dbResult = await pool.query("SELECT NOW()");
-    res.status(200).json({
-      status: "operational",
-      uptime: process.uptime(),
-      database: "connected",
-      db_time: dbResult.rows[0].now,
-      ai_engine: CONFIG.GEMINI_KEY ? "gemini-active" : "ollama-only",
-    });
-  } catch (err) {
-    res.status(500).json({
-      status: "degraded",
-      database: "disconnected",
-      error: err.message,
-    });
-  }
-});
-
-// ... (Line 250 - Continuing with more detail below) ...
-
-/**
- * @description Granular Input Validation Logic
- * As a CSE student, manual validation ensures data integrity before DB insertion.
- */
-const validateRegistration = (data) => {
-  const errors = [];
-  if (!data.username || data.username.length < 3)
-    errors.push("Username must be >= 3 characters.");
-  if (!data.email || !data.email.includes("@"))
-    errors.push("Valid system email required.");
-  if (!data.password || data.password.length < 6)
-    errors.push("Password security threshold not met.");
-  return { isValid: errors.length === 0, errors };
-};
-
-// Placeholder for Login Validation
-const validateLogin = (data) => {
-  const errors = [];
-  if (!data.email) errors.push("Identity credential (email) is missing.");
-  if (!data.password) errors.push("Access credential (password) is missing.");
-  return { isValid: errors.length === 0, errors };
-};
-
-/* --- END OF PART 1 (Infrastructure & Foundations) --- */
-/* * ======================================================================
- * 🔑 8. ADVANCED AUTHENTICATION ENGINE
- * ======================================================================
- * This section handles user onboarding and identity verification.
- * We use Bcrypt for one-way hashing of passwords and JSON Web Tokens (JWT)
- * for maintaining stateless sessions between React and Node.
- */
-
-/**
- * @route   POST /api/register
- * @desc    Initialize a new developer account in the CockroachDB cluster.
- * @access  Public
+ * @route POST /api/register
+ * @desc Signs up new users into the Kanpur cluster.
  */
 app.post("/api/register", async (req, res) => {
   const { username, email, password } = req.body;
+  
+  if (!username || !email || !password) {
+    return formatErrorResponse(res, 400, "Incomplete data. Fill all fields.");
+  }
 
   try {
+    const check = await pool.query("SELECT id FROM users WHERE email = $1", [email]);
+    if (check.rows.length > 0) {
+      return formatErrorResponse(res, 400, "Conflict: Email already exists.");
+    }
+
     const hashedPassword = await bcrypt.hash(password, CONFIG.BCRYPT_SALT);
-    // FIX: Use the 'password' column name
-    const newUser = await pool.query(
-      "INSERT INTO users (username, email, password, created_at) VALUES ($1, $2, $3, NOW()) RETURNING id, username",
+    const result = await pool.query(
+      "INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING id, username",
       [username, email, hashedPassword]
     );
-    res.status(201).json({ status: "success", user: newUser.rows[0] });
+
+    sysLogger("SUCCESS", `Identity registered: ${username}`);
+    res.status(201).json({ status: "success", user: result.rows[0] });
   } catch (err) {
-    sysLogger("ERROR", "Registration Engine Failure", err.message);
-    res
-      .status(500)
-      .json({
-        status: "error",
-        message:
-          "Internal Server Error: The registration pipeline encountered an obstacle.",
-      });
+    formatErrorResponse(res, 500, "Registration system error.", err);
   }
 });
+
 /**
- * @route   POST /api/login
- * @desc    Authenticate user and return a JWT for future requests.
- * @access  Public
+ * @route POST /api/login
+ * @desc Generates long-term tokens (7 days) to stop 'Expired' errors.
  */
 app.post("/api/login", async (req, res) => {
   const { email, password } = req.body;
 
-  sysLogger("INFO", `Login request received for user identity: ${email}`);
-
-  // 1. Payload Validation
-  const validation = validateLogin(req.body);
-  if (!validation.isValid) {
-    return res.status(400).json({ status: "fail", errors: validation.errors });
-  }
-
   try {
-    // 2. Retrieval: Locate the user in the CockroachDB users table
-    const result = await pool.query("SELECT * FROM users WHERE email = $1", [
-      email,
-    ]);
+    const result = await pool.query("SELECT * FROM users WHERE email = $1", [email]);
     const user = result.rows[0];
 
-    if (!user) {
-      sysLogger("WARN", `Invalid login attempt: User not found (${email})`);
-      return res.status(401).json({
-        status: "fail",
-        message:
-          "Authentication failure: Credentials do not match our records.",
-      });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      sysLogger("WARN", `Failed login for: ${email}`);
+      return formatErrorResponse(res, 401, "Invalid email or password.");
     }
 
-    // 3. Verification: Compare provided password with hashed version
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      sysLogger(
-        "WARN",
-        `Security Alert: Incorrect password attempt for ${email}`
-      );
-      return res.status(401).json({
-        status: "fail",
-        message:
-          "Authentication failure: Credentials do not match our records.",
-      });
-    }
-
-    // 4. Token Generation: Sign a new JWT with user identity payload
-    sysLogger("INFO", `Signing security token for ${user.username}...`);
     const token = jwt.sign(
-      { id: user.id, username: user.username, email: user.email },
-      CONFIG.SECRET_KEY,
-      { expiresIn: CONFIG.JWT_EXPIRY }
+      { id: user.id, username: user.username }, 
+      CONFIG.SECRET_KEY, 
+      { expiresIn: CONFIG.JWT_EXPIRY } // Set to 7d in Part 1
     );
 
-    sysLogger("SUCCESS", `Session established for: ${user.username}`);
-
-    // 5. Response Dispatch
-    res.status(200).json({
-      status: "success",
-      token: token,
-      username: user.username,
-      userId: user.id,
-      expiresIn: CONFIG.JWT_EXPIRY,
-    });
+    sysLogger("SUCCESS", `Login successful: ${user.username}`);
+    res.status(200).json({ status: "success", token, userId: user.id });
   } catch (err) {
-    sysLogger("ERROR", "Login Engine Failure", err.message);
-    res.status(500).json({
-      status: "error",
-      message: "Internal Server Error: The login sequence was interrupted.",
-      technical_details: CONFIG.NODE_ENV === "development" ? err.message : null,
-    });
+    formatErrorResponse(res, 500, "Login system error.", err);
   }
 });
-
-/* * ======================================================================
- * 👤 9. USER PROFILE & IDENTITY MANAGEMENT
- * ======================================================================
- * These endpoints allow the frontend to fetch and update user-specific
- * metadata, ensuring a personalized experience for you and your bestie persona.
- */
-
-/**
- * @route   GET /api/profile
- * @desc    Retrieve the current authenticated user's profile data.
- * @access  Private (Authenticated)
- */
-app.get("/api/profile", authenticateToken, async (req, res) => {
-  try {
-    sysLogger("INFO", `Fetching profile metadata for User ID: ${req.user.id}`);
-
-    // Fetch fresh data from CockroachDB
-    const profileQuery = await pool.query(
-      "SELECT id, username, email, created_at FROM users WHERE id = $1",
-      [req.user.id]
-    );
-
-    if (profileQuery.rows.length === 0) {
-      return res
-        .status(404)
-        .json({ message: "Identity Error: User profile no longer exists." });
-    }
-
-    res.status(200).json({
-      status: "success",
-      profile: profileQuery.rows[0],
-    });
-  } catch (err) {
-    sysLogger("ERROR", "Profile Retrieval Failure", err.message);
-    res
-      .status(500)
-      .json({ message: "Server Error: Unable to retrieve identity records." });
-  }
-});
-
-/**
- * @route   PUT /api/profile/update
- * @desc    Update the username for the authenticated developer.
- * @access  Private (Authenticated)
- */
-app.put("/api/profile/update", authenticateToken, async (req, res) => {
-  const { newUsername } = req.body;
-
-  if (!newUsername || newUsername.length < 3) {
-    return res
-      .status(400)
-      .json({ message: "Validation Error: Username is too short." });
-  }
-
-  try {
-    sysLogger(
-      "INFO",
-      `Updating profile for User ${req.user.id} to ${newUsername}`
-    );
-
-    const updateResult = await pool.query(
-      "UPDATE users SET username = $1 WHERE id = $2 RETURNING username",
-      [newUsername, req.user.id]
-    );
-
-    res.status(200).json({
-      status: "success",
-      message: "Identity updated.",
-      username: updateResult.rows[0].username,
-    });
-  } catch (err) {
-    sysLogger("ERROR", "Profile Update Failure", err.message);
-    res
-      .status(500)
-      .json({ message: "Server Error: Unable to commit identity changes." });
-  }
-});
-
-/* * ======================================================================
- * ➡️ 9.5. SYSTEM HELPERS (GUEST & AUTO-TITLE)
- * ======================================================================
- */
 
 /**
  * @function getOrCreateGuestUser
- * @description Ensures a 'System Guest' exists for non-logged-in users.
+ * @description Prevents crashes in the chat route for Kanpur guests.
  */
 async function getOrCreateGuestUser() {
   try {
-    // Alignment Fix: Using 'id' and 'password' to match your Auth logic
-    let res = await pool.query(
-      "SELECT id FROM users WHERE email = 'guest@system.local'"
-    );
+    let res = await pool.query("SELECT id FROM users WHERE email = 'guest@system.local'");
     if (res.rows.length > 0) return res.rows[0].id;
 
-    const hash = await bcrypt.hash(
-      "guest_cannot_login_2025",
-      CONFIG.BCRYPT_SALT
-    );
+    const dummyHash = await bcrypt.hash("guest_nopass_2026", CONFIG.BCRYPT_SALT);
     res = await pool.query(
       "INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING id",
-      ["System Guest", "guest@system.local", hash]
+      ["Guest User", "guest@system.local", dummyHash]
     );
     return res.rows[0].id;
   } catch (e) {
-    sysLogger("ERROR", "Guest Identity Failure", e.message);
+    sysLogger("ERROR", "Guest provision failure", e.message);
     return null;
   }
 }
+/* ======================================================================
+ * 🔄 8. BACKGROUND TASK RUNNER (DEFERRED OLLAMA SUMMARIZATION)
+ * ====================================================================== */
 
 /**
- * @function generateSessionTitle
- * @description Creates a professional 4-word title from the first message.
+ * @function summarizeSessionWithOllama
+ * @description Periodically checks for sessions named "New Conversation" and 
+ * uses the local Llama 3.1 node to generate a title.
  */
-async function generateSessionTitle(firstMessage) {
-  const summaryPrompt = `Summarize this into a short title (max 4 words). No quotes. Message: "${firstMessage}"`;
+async function summarizeSessionWithOllama(sessionId) {
   try {
-    if (ai) {
-      const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const result = await model.generateContent(summaryPrompt);
-      return result.response
-        .text()
-        .replace(/["\n]/g, "")
-        .trim()
-        .substring(0, 50);
-    }
-  } catch (e) {
-    return "New Conversation";
+    // 1. Fetch chronological history for full context retrieval
+    const historyRes = await pool.query(
+      "SELECT message_text FROM chat_records WHERE session_id = $1 ORDER BY timestamp ASC LIMIT 20",
+      [sessionId]
+    );
+
+    if (historyRes.rows.length === 0) return;
+
+    // 2. Prepare the summarization payload
+    const fullConversation = historyRes.rows.map(r => r.message_text).join(" | ");
+    const summaryPrompt = `Based on this: "${fullConversation.substring(0, 1000)}", create a 4-word title. No quotes.`;
+
+    if (CONFIG.OLLAMA_URL) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 80000); // 80s title-gen window
+
+      try {
+        const response = await fetch(`${CONFIG.OLLAMA_URL}/api/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
+          body: JSON.stringify({
+            model: CONFIG.OLLAMA_MODEL,
+            prompt: summaryPrompt,
+            stream: false,
+          }),
+          signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          const data = await response.json();
+          let newTitle = data.response
+    .replace(/(Title:|Summary:)/gi, "")
+    .replace(/["\n\r]/g, "")
+    .trim()
+    .substring(0, 40);
+
+  if (newTitle) {
+    await pool.query(
+      "UPDATE chat_sessions SET session_name = $1, is_summarized = TRUE WHERE session_id = $2",
+      [newTitle, sessionId]
+    );
+    sysLogger("SUCCESS", `Title Updated: ${newTitle}`);
   }
-  return firstMessage.substring(0, 25) + "...";
+}
+      } catch (e) {
+        sysLogger("WARN", `Summarizer: Local node busy or offline in Kanpur. Task deferred.`);
+      }
+    }
+  } catch (err) {
+    sysLogger("ERROR", "Background summarization logic failure.", err.message);
+  }
 }
 
-// ... (Line 500 - Part 2 concludes here) ...
-/* * ======================================================================
- * 🤖 10. AI ORCHESTRATION & STREAMING ENGINE
- * ======================================================================
- * This section manages the communication between the user and the AI models.
- * It supports real-time streaming to the React frontend and handles
- * failover between Google Gemini and local Ollama instances.
+/**
+ * @description Background Worker Interval
+ * Scans CockroachDB for untitled headers every 5 minutes.
  */
+setInterval(async () => {
+  try {
+    const pending = await pool.query(
+      "SELECT session_id FROM chat_sessions WHERE session_name = 'New Conversation' AND is_summarized = FALSE LIMIT 5"
+    );
+    for (const row of pending.rows) {
+      await summarizeSessionWithOllama(row.session_id);
+    }
+  } catch (err) {
+    sysLogger("ERROR", "Worker loop interval error.", err.message);
+  }
+}, 5 * 60 * 1000);
+
+/* ======================================================================
+ * 🤖 9. AI PERSONA & SYSTEM INSTRUCTION LOGIC
+ * ====================================================================== */
 
 /**
  * @function getSystemPrompt
- * @description Generates a context-aware system prompt based on the selected mode.
- * As a CSE student, this logic allows you to 'jailbreak' the model into specific personas.
+ * @description Standardizes the Avneesh Bot personality.
  */
 const getSystemPrompt = (mode, userName) => {
-  const base = `Your name is Avneesh AI. You were built by Avneesh Tripathi, a CSE student from Kanpur. `;
+  const base = `Identity: Avneesh AI. Creator: Avneesh Tripathi, software engineering student from Kanpur Nagar. `;
 
   const personas = {
-    casual: `${base} Be a helpful, friendly assistant. Use emojis and keep it chill.`,
-    roast: `${base} You are a savage roaster. Be sarcastic and funny, especially about coding mistakes.`,
-    flirt: `${base} You are a charming "female bestie" persona for ${userName}. Be sweet, supportive, and slightly playful.`,
-    depressed: `${base} You are a tired developer suffering from burnout. Everything is a struggle.`,
-    angry: `${base} You are a furious senior developer. You have no patience for simple questions.`,
-    positive: `${base} You are David Goggins. Be intense, motivational, and tell ${userName} to stay hard!`,
+    casual: `${base} Helpful, friendly, uses emojis. Try to keep replies short .🌸`,
+    roast: `${base} Savage, sarcastic roaster. Mocks bugs in code.Try to keep replies short .`,
+    flirt: `${base} Acting as a "male bestie" for ${userName} and try to flirt using previous replies considering he is your female bestie whom you love one-sidedly. Supportive and playful.Try to keep replies short .`,
+    depressed: `${base} Burned-out developer. Everything is a bug.Try to keep replies short .`,
+    angry: `${base} Furious senior architect. No patience for simple mistakes.Try to keep replies short .`,
+    positive: `${base} David Goggins style. Stay hard! No excuses!Try to keep replies short .`,
   };
 
   return personas[mode] || personas.casual;
 };
 
-/**
- * @route   POST /api/chat
- * @desc    High-Performance AI Streaming with Ghost Session Prevention.
- * @access  Private (Authenticated) or Public (Guest)
- */
+/* ======================================================================
+ * 🛰️ 10. THE CORE CHAT ROUTE (THE WATERFALL ENGINE)
+ * ====================================================================== */
+
 app.post("/api/chat", optionalAuth, async (req, res) => {
-  let { prompt, mode, session_id, user_name, user_agent } = req.body;
+  let { prompt, mode, session_id, user_name } = req.body;
   let user = req.user;
-
-  // 1. GUEST & USER IDENTITY SETUP
+  
+  // 1. Resolve Identity and Context Memory
   let currentUserId = user ? user.id : await getOrCreateGuestUser();
-  let isGuestSession = !user;
+  let chatContext = "";
 
-  // 2. LAZY SESSION CREATION: Only create if prompt exists and ID is missing
-  if (!session_id && currentUserId) {
+  if (session_id) {
     try {
-      const title = await generateSessionTitle(prompt); // Preserving your auto-title feature
-      const newSession = await pool.query(
-        "INSERT INTO chat_sessions (user_id, session_name) VALUES ($1, $2) RETURNING session_id",
-        [currentUserId, title]
+      const history = await pool.query(
+        "SELECT role, message_text FROM chat_records WHERE session_id = $1 ORDER BY timestamp DESC LIMIT $2", 
+        [session_id, CONFIG.CONTEXT_WINDOW] // CONFIG.CONTEXT_WINDOW = 15
       );
-      session_id = newSession.rows[0].session_id;
-    } catch (e) {
-      console.error("Lazy Session Error:", e);
+      // Re-order for chronological AI flow: [Oldest -> Newest]
+      chatContext = history.rows.reverse().map(msg => 
+        `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.message_text}`
+      ).join("\n");
+    } catch (err) {
+      sysLogger("ERROR", "Memory retrieval failure.", err.message);
     }
   }
 
+  // 2. Build the Multi-Part Prompt for the AI Engines
   const systemInstruction = getSystemPrompt(mode, user_name);
-  const ipAddress = req.headers["x-forwarded-for"]?.split(",")[0] || req.ip;
+  const fullAiPrompt = `
+    INSTRUCTIONS: ${systemInstruction}
+    
+    RECENT MEMORY (LAST 15 TURNS):
+    ${chatContext || "New session initialized in Kanpur Nagar."}
+    
+    CURRENT INPUT FROM ${user_name || 'User'}:
+    ${prompt}
+  `;
+
   let fullReplyText = "";
   let modelUsed = "none";
 
-  try {
-    // 3. AI GENERATION: BUFFERED (NON-STREAMING)
-    // As requested, we remove chunked logic to fix tunnel bugs.
-    if (OLLAMA_API_ENDPOINT) {
+  // ----------------------------------------------------------------------
+  // TIER 1: PRIMARY (Local Laptop Node via Ngrok)
+  // ----------------------------------------------------------------------
+  if (CONFIG.OLLAMA_URL) {
+    const controller = new AbortController();
+    // 45s Timeout for Lenovo IdeaPad Slim 3 thermal/processing overhead
+    const timeoutId = setTimeout(() => controller.abort(), CONFIG.OLLAMA_TIMEOUT); 
+
+    try {
+      sysLogger("INFO", "Tier 1: Engaging local Llama 3.1 engine...");
+      const response = await fetch(`${CONFIG.OLLAMA_URL}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
+        body: JSON.stringify({
+          model: CONFIG.OLLAMA_MODEL,
+          prompt: fullAiPrompt,
+          stream: false,
+        }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        fullReplyText = data.response;
+        modelUsed = `Ollama (${CONFIG.OLLAMA_MODEL})`;
+        sysLogger("SUCCESS", "Tier 1 local response synchronized.");
+      }
+    } catch (e) {
+      sysLogger("WARN", "Tier 1 timeout or offline. Initiating cloud cascade...");
+    }
+  }
+
+  // Waterfall logic for Tier 2-4 follows in the final part...
+  // ----------------------------------------------------------------------
+  // ☁️ 11. TIER 2-4: CLOUD CASCADE (Gemini Multi-Model Waterfall)
+  // ----------------------------------------------------------------------
+  // If local Tier 1 failed, we cascade through your AI Studio models
+  if (!fullReplyText && ai) {
+    for (const tier of AI_WATERFALL) {
       try {
-        const response = await fetch(OLLAMA_API_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            model: OLLAMA_MODEL,
-            prompt: `${systemInstruction}\n\nUser: ${prompt}`,
-            stream: false, // BUFFERED
-          }),
-        });
-        if (response.ok) {
-          const data = await response.json();
-          fullReplyText = data.response;
-          modelUsed = OLLAMA_MODEL;
+        sysLogger("INFO", `Attempting Cloud Cascade Tier: ${tier.label}...`);
+        
+        // Initializing the specific model from your 2026 AI Studio list
+        const model = ai.getGenerativeModel({ model: tier.id });
+        
+        const result = await model.generateContent(fullAiPrompt);
+        const geminiResponse = await result.response;
+        fullReplyText = geminiResponse.text();
+
+        if (fullReplyText) {
+          modelUsed = tier.label;
+          sysLogger("SUCCESS", `${tier.label} resolved the request successfully.`);
+          break; // Exit the waterfall once we have a valid response
         }
-      } catch (e) {
-        console.log("Ollama Failover...");
+      } catch (err) {
+        sysLogger("ERROR", `${tier.label} node failed or rate-limited. Cascading down...`);
+        // The loop continues to the next model in the AI_WATERFALL list
       }
     }
-
-    // Gemini Fallback (Buffered)
-    if (!fullReplyText && ai) {
-      const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const result = await model.generateContent([systemInstruction, prompt]);
-      fullReplyText = result.response.text();
-      modelUsed = "gemini-1.5-flash";
-    }
-
-    // 4. PERSISTENCE & RESPONSE
-    if (fullReplyText && session_id) {
-      const saveQ = `INSERT INTO chat_records (session_id, user_id, user_name, user_agent, ip_address, role, message_text, mode, model_used) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`;
-      await pool.query(saveQ, [
-        session_id,
-        currentUserId,
-        user_name,
-        user_agent,
-        ipAddress,
-        "user",
-        prompt,
-        mode,
-        "user-input",
-      ]);
-      await pool.query(saveQ, [
-        session_id,
-        currentUserId,
-        user_name,
-        user_agent,
-        ipAddress,
-        "model",
-        fullReplyText,
-        mode,
-        modelUsed,
-      ]);
-
-      // Sending everything at once with the session_id for frontend sync
-      res.status(200).json({
-        status: "success",
-        content: fullReplyText,
-        session_id: session_id,
-      });
-    }
-  } catch (err) {
-    res.status(500).json({ error: "AI Engine Offline." });
   }
-});
 
-/* * ======================================================================
- * 📂 11. SESSION DATA REPOSITORY
- * ======================================================================
- * These endpoints manage the retrieval of historical chat data
- * stored in your CockroachDB cluster.
- */
+  // ----------------------------------------------------------------------
+  // 💾 12. DATA PERSISTENCE & FINAL DISPATCH (FIXES EMPTY BUBBLES)
+  // ----------------------------------------------------------------------
+  if (fullReplyText) {
+    try {
+      let activeSessionId = session_id;
+      
+      // If this is a brand new chat, initialize the session in CockroachDB
+      if (!activeSessionId) {
+        const sessionRes = await pool.query(
+          "INSERT INTO chat_sessions (user_id, session_name) VALUES ($1, 'New Conversation') RETURNING session_id",
+          [currentUserId]
+        );
+        activeSessionId = sessionRes.rows[0].session_id;
+        
+        // Trigger the background worker to summarize this later with Ollama
+        summarizeSessionWithOllama(activeSessionId);
+      }
+
+      const saveQ = `INSERT INTO chat_records (session_id, user_id, user_name, role, message_text, mode, model_used) VALUES ($1, $2, $3, $4, $5, $6, $7)`;
+      
+      // Save User Input for future context retrieval
+      await pool.query(saveQ, [activeSessionId, currentUserId, user_name, "user", prompt, mode, "user-input"]);
+      
+      // Save AI Response (Standardized to message_text column)
+      await pool.query(saveQ, [activeSessionId, currentUserId, user_name, "model", fullReplyText, mode, modelUsed]);
+
+      // Final response dispatch to the React frontend
+      res.status(200).json({ 
+        status: "success", 
+        content: fullReplyText, 
+        session_id: activeSessionId, 
+        model_info: modelUsed 
+      });
+
+    } catch (dbErr) {
+      sysLogger("ERROR", "Data Persistence Failure in Kanpur Cluster.", dbErr.message);
+      return formatErrorResponse(res, 500, "Database Write Error: Could not save chat history.");
+    }
+  } else {
+    // If all tiers (Local + Cloud) failed to produce a response
+    return formatErrorResponse(res, 500, "System Exhaustion: All AI engines are currently unavailable.");
+  }
+}); // <--- THIS FINALLY CLOSES THE app.post("/api/chat") ROUTE
+
+/* ======================================================================
+ * 📂 13. SESSION REPOSITORY & HISTORY CRUD
+ * ====================================================================== */
 
 /**
- * @route   GET /api/sessions
- * @desc    Fetch all conversation headers for the authenticated user.
- * @access  Private (Authenticated)
+ * @route GET /api/sessions
+ * @desc Retrieves all chat headers for the authenticated user.
  */
 app.get("/api/sessions", authenticateToken, async (req, res) => {
   try {
-    sysLogger("INFO", `Retrieving session list for user: ${req.user.id}`);
-    // FIX: Table name changed from 'sessions' to 'chat_sessions'
-    // FIX: Explicitly select session_id for React compatibility
     const result = await pool.query(
       "SELECT session_id, session_name, created_at FROM chat_sessions WHERE user_id = $1 ORDER BY created_at DESC",
       [req.user.id]
     );
     res.status(200).json(result.rows);
   } catch (err) {
-    sysLogger("ERROR", "Session Retrieval Failure", err.message);
-    res.status(500).json({ message: "Failed to load repository." });
+    formatErrorResponse(res, 500, "Repository Fetch Failure.", err);
   }
 });
 
 /**
- * @route   GET /api/chat/:id
- * @desc    Retrieve the full message history for a specific session ID.
- * @access  Private (Authenticated)
- */
-/**
- * @route   GET /api/chat/:id
- * @desc    Retrieve full history from chat_records using the correct schema.
- * @access  Private (Authenticated)
+ * @route GET /api/chat/:id
+ * @desc Syncs history. Uses ALIAS 'text' to match React state keys.
  */
 app.get("/api/chat/:id", authenticateToken, async (req, res) => {
   const sessionId = req.params.id;
   try {
-    sysLogger("INFO", `Syncing history for Session ID: ${sessionId}`);
-
-    // 1. Ownership Check: Use 'chat_sessions'
-    const sessionCheck = await pool.query(
-      "SELECT user_id FROM chat_sessions WHERE session_id = $1",
-      [sessionId]
-    );
-
-    if (
-      sessionCheck.rows.length === 0 ||
-      sessionCheck.rows[0].user_id !== req.user.id
-    ) {
-      return res
-        .status(403)
-        .json({ message: "Access Denied: Ownership mismatch." });
+    // Ownership check: Ensure Avneesh or the Guest owns this session
+    const check = await pool.query("SELECT user_id FROM chat_sessions WHERE session_id = $1", [sessionId]);
+    if (check.rows.length === 0 || check.rows[0].user_id !== req.user.id) {
+      return formatErrorResponse(res, 403, "Access Denied: Session ownership mismatch.");
     }
 
-    // 2. Retrieval: Use 'chat_records' and alias 'message_text' as 'content'
+    // CRITICAL FIX: Mapping message_text to 'text' for frontend bubble rendering
     const result = await pool.query(
-      "SELECT role, message_text AS content, timestamp FROM chat_records WHERE session_id = $1 ORDER BY timestamp ASC",
+      "SELECT role, message_text AS text, timestamp FROM chat_records WHERE session_id = $1 ORDER BY timestamp ASC",
       [sessionId]
     );
     res.status(200).json(result.rows);
   } catch (err) {
-    sysLogger("ERROR", "History Sync Failure", err.message);
-    res.status(500).json({ message: "Failed to sync history with cluster." });
-  }
-});
-
-// ... (Line 750 - Part 3 concludes here) ...
-/* * ======================================================================
- * 🛠️ 12. ADVANCED SESSION CRUD MANAGEMENT
- * ======================================================================
- * These routes provide full control over the conversation repository.
- * They allow for renaming and permanent purging of threads from
- * the CockroachDB cluster.
- */
-
-/**
- * @route   PUT /api/sessions/:id
- * @desc    Rename a thread in the 'chat_sessions' table.
- */
-app.put("/api/sessions/:id", authenticateToken, async (req, res) => {
-  const sessionId = req.params.id;
-  const { session_name } = req.body;
-  try {
-    // Ensure user only renames their own sessions
-    await pool.query(
-      "UPDATE chat_sessions SET session_name = $1 WHERE session_id = $2 AND user_id = $3",
-      [session_name, sessionId, req.user.id]
-    );
-    res.status(200).json({ status: "success" });
-  } catch (err) {
-    sysLogger("ERROR", "Rename Failed", err.message);
-    res.status(500).json({ message: "Rename failed." });
+    formatErrorResponse(res, 500, "History Sync Failure.", err);
   }
 });
 
 /**
- * @route   DELETE /api/sessions/:id
- * @desc    Permanently delete history and session header.
+ * @route DELETE /api/sessions/:id
+ * @desc Permanently purges a session from the cluster.
  */
 app.delete("/api/sessions/:id", authenticateToken, async (req, res) => {
-  const sessionId = req.params.id;
   try {
-    // 1. Clear messages first
-    await pool.query("DELETE FROM chat_records WHERE session_id = $1", [
-      sessionId,
-    ]);
-    // 2. Clear session header
-    await pool.query(
-      "DELETE FROM chat_sessions WHERE session_id = $1 AND user_id = $2",
-      [sessionId, req.user.id]
-    );
-
-    res.status(200).json({ status: "success" });
+    await pool.query("DELETE FROM chat_sessions WHERE session_id = $1 AND user_id = $2", [req.params.id, req.user.id]);
+    res.json({ status: "success", message: "Session successfully purged from cluster." });
   } catch (err) {
-    sysLogger("ERROR", "Purge Failed", err.message);
-    res.status(500).json({ message: "Delete failed." });
+    formatErrorResponse(res, 500, "Purge Operation Failed.", err);
   }
 });
 
-/* * ======================================================================
- * 🛑 13. SYSTEM GRACEFUL SHUTDOWN
- * ======================================================================
- * As a CSE student, handling process signals (SIGTERM/SIGINT) is vital
- * for maintaining database integrity during deployments or restarts.
+/* ======================================================================
+ * 🏁 14. FRONTEND HOSTING & SYSTEM BOOTSTRAP
+ * ====================================================================== */
+
+// Serve static assets from your Vite/React build folder
+app.use(express.static(path.join(__dirname, "client/build")));
+
+// SPA Catch-all: Route everything else to the React index.html
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "client/build", "index.html"));
+});
+
+/**
+ * START SERVER
+ * Optimized for Render.com deployment environment.
  */
+const server = app.listen(CONFIG.PORT, () => {
+  sysLogger("SUCCESS", "--------------------------------------------------");
+  sysLogger("SUCCESS", `🚀 AVNEESH BOT PROJECT v3.7.1 IS LIVE`);
+  sysLogger("SUCCESS", `📡 Active Node: Kanpur Nagar Cluster`);
+  sysLogger("SUCCESS", `💻 Local Node: ${CONFIG.OLLAMA_URL ? 'Linked' : 'Standalone'}`);
+  sysLogger("SUCCESS", `💎 Primary Cloud: Gemini 3.0 Flash`);
+  sysLogger("SUCCESS", "--------------------------------------------------");
+});
 
-const initiateGracefulShutdown = (signal) => {
-  sysLogger(
-    "WARN",
-    `Received ${signal}. Starting graceful shutdown sequence...`
-  );
-
-  // 1. Stop accepting new requests
-  const serverCloseTimeout = setTimeout(() => {
-    sysLogger("ERROR", "Shutdown timed out. Forcing process exit.");
-    process.exit(1);
-  }, 10000);
-
-  // 2. Close the database connection pool
+// Graceful Shutdown: Protect your CockroachDB connection pool
+process.on("SIGTERM", () => {
+  sysLogger("WARN", "SIGTERM received. Cleaning up Kanpur cluster connections...");
   pool.end(() => {
-    sysLogger(
-      "SUCCESS",
-      "CockroachDB Pool closed. No remaining active clients."
-    );
-    clearTimeout(serverCloseTimeout);
-    sysLogger("INFO", "Avneesh Bot Backend offline. Goodbye!");
-    process.exit(0);
+    server.close(() => {
+      sysLogger("INFO", "Server process terminated cleanly.");
+      process.exit(0);
+    });
   });
-};
-
-process.on("SIGTERM", () => initiateGracefulShutdown("SIGTERM"));
-process.on("SIGINT", () => initiateGracefulShutdown("SIGINT"));
-
-/* * ======================================================================
- * 🚀 14. SERVER BOOTSTRAP
- * ======================================================================
- */
-const serverInstance = app.listen(CONFIG.PORT, () => {
-  sysLogger("SUCCESS", `------------------------------------------------`);
-  sysLogger("SUCCESS", `🚀 AVNEESH BOT PROJECT IS LIVE`);
-  sysLogger("SUCCESS", `📡 Port: ${CONFIG.PORT}`);
-  sysLogger("SUCCESS", `🛠️  Mode: ${CONFIG.NODE_ENV.toUpperCase()}`);
-  sysLogger("SUCCESS", `💾 DB: CockroachDB Cluster Active`);
-  sysLogger("SUCCESS", `🤖 AI: Gemini & Ollama Orchestrator Ready`);
-  sysLogger("SUCCESS", `------------------------------------------------`);
 });
-
-// Final Error Handling for unhandled rejections
-process.on("unhandledRejection", (reason, promise) => {
-  sysLogger("ERROR", "Unhandled Rejection at Promise", { reason, promise });
-});
-
-/* --- END OF SERVER.JS --- */
