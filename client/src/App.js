@@ -267,8 +267,8 @@ function App() {
   // A. Persistence & Security State
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY));
   const [userName, setUserName] = useState(
-    () => localStorage.getItem(USERNAME_KEY) || "User"
-  );
+  () => localStorage.getItem(USERNAME_KEY) || "Developer" // ✅ Fallback to "Developer"
+);
   const [isLoggedIn, setIsLoggedIn] = useState(!!token);
   const [isGuest, setIsGuest] = useState(false);
 
@@ -353,13 +353,28 @@ function App() {
     }
   }, [isLoggedIn, isGuest, token]);
 
+  // ✅ NEW EFFECT: Auto-loads messages for the persistent session after refresh
+useEffect(() => {
+  if (isLoggedIn && activeSessionId && history.length === 0 && !isTyping) {
+    console.log("🔄 System Re-sync: Auto-loading session history...");
+    loadChat(activeSessionId);
+  }
+}, [isLoggedIn, activeSessionId]);
+
   // CSE Logic: Handle successful login event
   const onSuccessfulAuth = (receivedToken, dbUsername) => {
-    setToken(receivedToken);
-    setUserName(dbUsername);
-    setIsLoggedIn(true);
-    setIsGuest(false);
-  };
+  // ✅ FIX: Ensure we never save "undefined" as a string
+  const cleanName = dbUsername && dbUsername !== "undefined" ? dbUsername : "Developer";
+  
+  setToken(receivedToken);
+  setUserName(cleanName);
+  setIsLoggedIn(true);
+  setIsGuest(false);
+  
+  // Force immediate save to localStorage
+  localStorage.setItem(TOKEN_KEY, receivedToken);
+  localStorage.setItem(USERNAME_KEY, cleanName);
+};
 
   // CSE Logic: Initialize Guest Persona
   const onGuestBypass = () => {
@@ -537,17 +552,25 @@ function App() {
     if (!response.ok) throw new Error(payload.message || "AI Connection Error");
 
     // 2. Sync Session ID (If backend created a new session)
-    if (payload.session_id && String(payload.session_id) !== String(activeSessionId)) {
-      setActiveSessionId(payload.session_id);
-      localStorage.setItem(SESSION_PERSIST_KEY, payload.session_id);
-      
-      // Refresh session list to show the new auto-generated title
-      setTimeout(async () => {
-    const res = await fetch(`${API_BASE_URL}/sessions`, {
+    // Update the session check inside executeAISend in App.js
+if (payload.session_id && String(payload.session_id) !== String(activeSessionId)) {
+  setActiveSessionId(payload.session_id);
+  localStorage.setItem(SESSION_PERSIST_KEY, payload.session_id);
+  
+  // 🔄 THE TRIPLE REFRESH STRATEGY
+  // 1. Refresh immediately to show the new session ID
+  const firstRes = await fetch(`${API_BASE_URL}/sessions`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (firstRes.ok) setSessions(await firstRes.json());
+
+  // 2. Refresh again after 5 seconds to catch the AI-generated title
+  setTimeout(async () => {
+    const secondRes = await fetch(`${API_BASE_URL}/sessions`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (res.ok) setSessions(await res.json());
-  }, 1500); 
+    if (secondRes.ok) setSessions(await secondRes.json());
+  }, 5000); 
 }
 
     // 3. Update history with the full reply
@@ -771,7 +794,7 @@ function App() {
               : sessions.find(
                   (s) => String(s.session_id) === String(activeSessionId)
                 )?.session_name || "System Initialized"}
-          </span>
+          </span> 
         </div>
       </div>
 
@@ -831,11 +854,11 @@ function App() {
         <button
           className="hero-suggestion-card"
           onClick={() =>
-            setUserInput("Explain the logic behind React's useStreaming hook.")
+            setUserInput("Explain the logic behind React's useEffect hook.")
           }
         >
           <span className="sug-icon">🚀</span>
-          <span>Explain Streaming</span>
+          <span>Explain useEffect</span>
         </button>
         <button
           className="hero-suggestion-card"
@@ -956,18 +979,19 @@ function App() {
             <span className="security-tag">ENCRYPTED</span>
           </div>
           <button
-            className="send-action-btn"
-            onClick={executeAISend}
-            disabled={isTyping || !userInput.trim()}
-          >
-            {isTyping ? (
-              <div className="btn-spinner"></div>
-            ) : (
-              <svg viewBox="0 0 24 24" className="send-svg-icon">
-                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-              </svg>
-            )}
-          </button>
+  className="send-action-btn"
+  onClick={executeAISend}
+  disabled={isTyping || !userInput.trim()}
+>
+  {/* ✅ Logic: Show spinner only while waiting for AI reply */}
+  {isTyping ? (
+    <div className="btn-spinner"></div>
+  ) : (
+    <svg viewBox="0 0 24 24" className="send-svg-icon">
+      <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" fill="currentColor" />
+    </svg>
+  )}
+</button>
         </div>
       </div>
       <div className="input-system-disclaimer">

@@ -47,7 +47,7 @@ const CONFIG = {
   BCRYPT_SALT: 12,
   JWT_EXPIRY: "7d", // Extended to 7 days to stop those annoying "Expired" errors
   CONTEXT_WINDOW: 15, // Remembers the last 15 messages
-  OLLAMA_TIMEOUT: 60000, // 45s to give your Lenovo time to process
+  OLLAMA_TIMEOUT: 120000, // 120s to give your Lenovo time to process
 };
 
 // Initialize Google AI with your 2026 Studio Models
@@ -159,6 +159,11 @@ const syncDatabaseSchema = async () => {
         model_used TEXT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    await client.query(`
+      ALTER TABLE chat_sessions 
+      ADD COLUMN IF NOT EXISTS is_summarized BOOLEAN DEFAULT FALSE;
     `);
 
     sysLogger('SUCCESS', 'Infrastructure and Database are synchronized.');
@@ -395,16 +400,19 @@ async function summarizeSessionWithOllama(sessionId) {
  */
 setInterval(async () => {
   try {
+    // Look for sessions that haven't been summarized yet, regardless of their current name
     const pending = await pool.query(
-      "SELECT session_id FROM chat_sessions WHERE session_name = 'New Conversation' AND is_summarized = FALSE LIMIT 5"
+      "SELECT session_id FROM chat_sessions WHERE is_summarized = FALSE LIMIT 5"
     );
     for (const row of pending.rows) {
+      // Small delay between each summary to prevent overloading your Lenovo CPU
+      await new Promise(resolve => setTimeout(resolve, 2000));
       await summarizeSessionWithOllama(row.session_id);
     }
   } catch (err) {
     sysLogger("ERROR", "Worker loop interval error.", err.message);
   }
-}, 5 * 60 * 1000);
+}, 2 * 60 * 1000); // Check every 2 minutes instead of 5
 
 /* ======================================================================
  * 🤖 9. AI PERSONA & SYSTEM INSTRUCTION LOGIC
@@ -633,6 +641,36 @@ app.delete("/api/sessions/:id", authenticateToken, async (req, res) => {
     res.json({ status: "success", message: "Session successfully purged from cluster." });
   } catch (err) {
     formatErrorResponse(res, 500, "Purge Operation Failed.", err);
+  }
+});
+
+/**
+ * @route PUT /api/sessions/:id
+ * @desc Updates the title of a specific session in CockroachDB
+ */
+/**
+ * @route PUT /api/sessions/:id
+ * @desc Updates session title in the Kanpur Nagar Cluster
+ */
+app.put("/api/sessions/:id", authenticateToken, async (req, res) => {
+  const { session_name } = req.body;
+  const sessionId = req.params.id;
+
+  try {
+    // Verify ownership before updating to secure Avneesh's data
+    const result = await pool.query(
+      "UPDATE chat_sessions SET session_name = $1 WHERE session_id = $2 AND user_id = $3 RETURNING *",
+      [session_name, sessionId, req.user.id]
+    );
+
+    if (result.rowCount === 0) {
+      return formatErrorResponse(res, 404, "Session not found or access denied.");
+    }
+
+    sysLogger("SUCCESS", `Session ${sessionId} renamed to: ${session_name}`);
+    res.json({ status: "success", message: "Title updated." });
+  } catch (err) {
+    formatErrorResponse(res, 500, "Database Rename Error.", err);
   }
 });
 

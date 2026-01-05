@@ -156,8 +156,10 @@ body {
 
 .app-shell-v2 {
   display: flex;
-  height: 100vh;
-  width: 100vw;
+  height: 100dvh;
+  width: 100%;
+  overflow: hidden;
+  position: relative;
   background-color: var(--bg-deep-obsidian);
 }
 
@@ -344,9 +346,10 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
   position: relative;
   overflow: hidden;
+  padding-bottom: env(safe-area-inset-bottom);
   background-image: 
     radial-gradient(at 0% 0%, hsla(253, 16%, 7%, 1) 0, transparent 50%),
     radial-gradient(at 50% 0%, var(--accent-soft) 0, transparent 50%);
@@ -365,7 +368,11 @@ body {
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--brd-main);
-  z-index: 10;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  /* Adds extra space for mobile status bars and search bars */
+  padding-top: env(safe-area-inset-top, 10px);
 }
 
 .header-left-cluster { display: flex; align-items: center; gap: 16px; }
@@ -633,4 +640,419 @@ body {
   .hero-title { font-size: 1.8rem; }
   .message-content-bubble { font-size: 0.95rem; }
   .input-control-zone { padding: 0 12px 16px; }
+}
+
+/* ----------------------------------------------------------------------
+   🔐 AUTHVIEW REFINEMENT: Fixing the unstyled buttons
+   ---------------------------------------------------------------------- */
+.auth-visibility-toggle {
+  background: transparent;
+  border: 1px solid var(--brd-main);
+  color: var(--accent-main);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.65rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-transform: uppercase;
+}
+
+.auth-visibility-toggle:hover {
+  border-color: var(--accent-main);
+  background: var(--accent-soft);
+}
+
+.auth-mode-switch {
+  background: transparent;
+  border: none;
+  color: var(--txt-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  transition: color 0.2s;
+}
+
+.auth-mode-switch:hover {
+  color: var(--accent-main);
+}
+
+/* ----------------------------------------------------------------------
+   🔄 SEND BUTTON SPINNER: Smooth loading animation
+   ---------------------------------------------------------------------- */
+.btn-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2.5px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ----------------------------------------------------------------------
+   ✨ UI POLISH: Glowing Active Sessions & Better Footer
+   ---------------------------------------------------------------------- */
+.history-nav-item.active {
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent-main); /* Visual "active" marker */
+  box-shadow: inset 10px 0 20px -10px var(--accent-alpha);
+}
+
+.account-footer {
+  background: rgba(255, 255, 255, 0.03); /* Subtle backdrop */
+  padding: 15px;
+  border-radius: var(--radius-md);
+  margin-top: auto;
+}
+.session-dropdown-float {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  width: 160px;
+  background: var(--bg-sidebar); /* Dark background */
+  border: 1px solid var(--brd-main);
+  border-radius: 12px;
+  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+  z-index: 2000;
+  overflow: hidden;
+  padding: 4px;
+}
+
+.dropdown-opt-btn {
+  width: 100%;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: none;
+  color: var(--txt-main);
+  font-size: 0.8rem;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.dropdown-opt-btn:hover { background: var(--brd-main); }
+.dropdown-opt-btn.delete-warning:hover { color: var(--sys-danger); }
+/* ✅ CRITICAL: This anchors the menu to the specific session item */
+.menu-container {
+  position: relative; 
+  display: flex;
+  align-items: center;
+}
+
+/* Adjust the dropdown position so it doesn't overlap the text */
+.session-dropdown-float {
+  position: absolute;
+  right: 0;
+  top: 100%; /* Appears right below the three dots */
+  width: 160px;
+  background: #161b22; /* Matches your sidebar */
+  border: 1px solid var(--brd-main);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  z-index: 1001; /* Above everything else */
+  padding: 6px;
+}
+/* Styles the 'three dots' to look like a professional button */
+.session-options-trigger {
+  background: transparent;
+  border: none;
+  color: var(--txt-muted);
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 1.2rem;
+  transition: all 0.2s;
+}
+
+.session-options-trigger:hover {
+  background: var(--brd-main);
+  color: var(--txt-pure);
+}
+
+/* Fixes the 'cross' in the sidebar header */
+.sidebar-close-trigger {
+  background: var(--bg-input);
+  border: 1px solid var(--brd-main);
+  color: var(--txt-muted);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  margin-left: auto; /* Keeps it separated from the text */
+  transition: all 0.2s;
+}
+
+/* Only show the close 'cross' on mobile/tablets */
+@media (min-width: 1025px) {
+  .sidebar-close-trigger { display: none; }
+}
+
+.sidebar-close-trigger:hover {
+  color: var(--sys-danger);
+  border-color: var(--sys-danger);
+}
+/* Fix for 'CONTINUE AS GUEST' and 'SHOW' buttons */
+.auth-guest-cta, .auth-visibility-toggle {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--brd-main);
+  color: var(--txt-main);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-transform: uppercase;
+}
+
+.auth-guest-cta:hover, .auth-visibility-toggle:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-main);
+  color: var(--accent-main);
+}
+
+/* Fix for 'New Developer? Create ID' link */
+.auth-mode-switch {
+  background: transparent;
+  border: none;
+  color: var(--txt-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+/* ----------------------------------------------------------------------
+   💡 HERO SUGGESTIONS GRID: Fixing the squashed buttons
+   ---------------------------------------------------------------------- */
+
+.hero-suggestions-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 32px;
+  max-width: 800px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.hero-suggestion-card {
+  background: rgba(255, 255, 255, 0.03); /* Subtle glass effect */
+  border: 1px solid var(--brd-main);
+  border-radius: 12px;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--txt-main);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s var(--ease-smooth);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.hero-suggestion-card:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-main);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px var(--accent-alpha);
+  color: var(--txt-pure);
+}
+
+.sug-icon {
+  font-size: 1.1rem;
+  background: rgba(255, 255, 255, 0.05);
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+}
+/* ----------------------------------------------------------------------
+   🎭 PREMIUM MODE SELECTOR: Customizing the 'broken' dropdown
+   ---------------------------------------------------------------------- */
+
+.mode-selector-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* Styles the actual <select> element */
+.premium-mode-select {
+  appearance: none; /* ✅ Strips default browser styling */
+  -webkit-appearance: none;
+  background: rgba(22, 27, 34, 0.6); /* Translucent dark background */
+  border: 1px solid var(--brd-main);
+  border-radius: 8px;
+  color: var(--txt-main);
+  padding: 6px 32px 6px 12px; /* Extra right padding for the custom arrow */
+  font-size: 0.75rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.3s var(--ease-smooth);
+  outline: none;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* Hover effect with brand glow */
+.premium-mode-select:hover {
+  border-color: var(--accent-main);
+  background: var(--bg-input);
+  box-shadow: 0 0 12px var(--accent-alpha);
+}
+
+/* Style for the options inside the dropdown */
+.premium-mode-select option {
+  background-color: var(--bg-sidebar); /* Dark options menu */
+  color: var(--txt-main);
+  padding: 10px;
+}
+
+/* ✅ CUSTOM ARROW: Adds a technical marker to the dropdown */
+.mode-selector-wrapper::after {
+  content: '▼';
+  font-size: 0.6rem;
+  color: var(--txt-muted);
+  position: absolute;
+  right: 12px;
+  pointer-events: none; /* Click goes through to the select */
+}
+
+/* ----------------------------------------------------------------------
+   💡 BUTTON ALIGNMENT: Side-by-side fix
+   ---------------------------------------------------------------------- */
+.header-right-cluster {
+  display: flex;
+  align-items: center;
+  gap: 16px; /* Spacing between status dot and mode selector */
+}
+/* ----------------------------------------------------------------------
+   📱 MOBILE HEADER OPTIMIZATION
+   ---------------------------------------------------------------------- */
+
+@media (max-width: 640px) {
+  .main-header-glass {
+    padding: 0 12px; /* Reduce side padding */
+    gap: 8px;
+  }
+
+  /* 1. Shrink the session name so it doesn't push buttons out */
+  .bc-current {
+    max-width: 100px !important; /* Force a smaller width on mobile */
+    font-size: 0.8rem;
+  }
+
+  /* 2. Hide the 'ENGINE READY' text to save space, keep just the dot */
+  .status-indicator-box span {
+    display: none;
+  }
+
+  /* 3. Make the mode selector more compact */
+  .premium-mode-select {
+    padding: 6px 24px 6px 8px;
+    font-size: 0.65rem;
+  }
+  
+  .header-right-cluster {
+    gap: 8px; /* Tighten gap between status and selector */
+  }
+}
+/* ----------------------------------------------------------------------
+   📜 REPOSITORY LIST OPTIMIZATION
+   ---------------------------------------------------------------------- */
+
+.history-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  /* ✅ FIX: Prevents children from expanding outside the sidebar */
+  overflow: hidden; 
+  width: 100%;
+}
+
+.nav-item-title-box {
+  flex: 1; /* Takes remaining space */
+  /* ✅ FIX: This is the magic line that allows the title to shrink */
+  min-width: 0; 
+}
+
+.nav-item-title {
+  display: block;
+  font-size: 0.85rem;
+  /* ✅ FIX: Smoothly cuts off long names with '...' */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.menu-container {
+  /* ✅ FIX: Ensures the dots NEVER shrink or disappear */
+  flex-shrink: 0; 
+  position: relative;
+  margin-left: 8px;
+}
+/* ----------------------------------------------------------------------
+   🎯 DROPDOWN BREAKOUT: Ensuring full visibility
+   ---------------------------------------------------------------------- */
+
+.menu-container {
+  position: relative; /* ✅ Anchor point for the dropdown */
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2001; /* High z-index to stay above other session items */
+}
+
+.session-dropdown-float {
+  position: absolute;
+  /* ✅ SHIFT LEFT: Prevents it from hitting the sidebar edge */
+  right: 0; 
+  top: 110%; 
+  width: 170px;
+  background: #1c2128; /* Slightly lighter than sidebar for contrast */
+  border: 1px solid var(--brd-main);
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
+  /* ✅ Z-INDEX: Ensures it floats ABOVE the sidebar boundary */
+  z-index: 9999; 
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* ✅ PREVENT PARENT OVERFLOW: 
+   Make sure the session item doesn't cut off its own children */
+.history-nav-item {
+  position: relative;
+  overflow: visible !important; /* Forces the item to show its children */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.sidebar-history-scroller {
+  /* Keep scrolling, but ensure the content inside can pop out */
+  overflow-y: auto;
+  overflow-x: visible; 
+  padding: 10px 16px 80px; /* Extra bottom padding for the last item's menu */
 }
