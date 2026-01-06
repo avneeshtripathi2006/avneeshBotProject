@@ -354,12 +354,13 @@ function App() {
   }, [isLoggedIn, isGuest, token]);
 
   // ✅ NEW EFFECT: Auto-loads messages for the persistent session after refresh
+// ✅ Corrected: Only auto-loads if the user is LOGGED IN (not a guest)
 useEffect(() => {
-  if (isLoggedIn && activeSessionId && history.length === 0 && !isTyping) {
-    console.log("🔄 System Re-sync: Auto-loading session history...");
+  if (isLoggedIn && !isGuest && activeSessionId && history.length === 0 && !isTyping) {
+    console.log("🔄 System Re-sync: Fetching authorized session data...");
     loadChat(activeSessionId);
   }
-}, [isLoggedIn, activeSessionId]);
+}, [isLoggedIn, isGuest, activeSessionId]);
 
   // CSE Logic: Handle successful login event
   const onSuccessfulAuth = (receivedToken, dbUsername) => {
@@ -408,13 +409,14 @@ useEffect(() => {
     setActiveSessionId(id);
     localStorage.setItem(SESSION_PERSIST_KEY, id);
 
-    const headers = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    };
+    const headers = { "Content-Type": "application/json" };
 
-    try {
-      const response = await fetch(`${API_BASE_URL}/chat/${id}`, { headers });
+  if (token && !isGuest) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/chat/${id}`, { headers });
       if (response.ok) {
         const data = await response.json();
 
@@ -532,17 +534,21 @@ useEffect(() => {
   // 1. Optimistically update UI
   setHistory((prev) => [...prev, { role: "user", text: capturedPrompt }]);
 
+  const headers = { "Content-Type": "application/json" };
+
+  // Only attach token if the user is logged in and NOT a guest
+  if (token && !isGuest) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   try {
     const response = await fetch(`${API_BASE_URL}/chat`, {
       method: "POST",
-      headers: { 
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}` 
-      },
+      headers: headers, // Uses our conditional headers
       body: JSON.stringify({
         prompt: capturedPrompt,
         mode: mode,
-        session_id: activeSessionId, // Send null if it's a new chat
+        session_id: activeSessionId,
         user_name: userName,
       }),
     });
@@ -553,22 +559,24 @@ useEffect(() => {
 
     // 2. Sync Session ID (If backend created a new session)
     // Update the session check inside executeAISend in App.js
+// 🔄 THE CLEAN TRIPLE REFRESH STRATEGY (Guest Aware)
 if (payload.session_id && String(payload.session_id) !== String(activeSessionId)) {
   setActiveSessionId(payload.session_id);
   localStorage.setItem(SESSION_PERSIST_KEY, payload.session_id);
   
-  // 🔄 THE TRIPLE REFRESH STRATEGY
-  // 1. Refresh immediately to show the new session ID
-  const firstRes = await fetch(`${API_BASE_URL}/sessions`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  // 1. Prepare conditional headers for the refresh calls
+  const refreshHeaders = { "Content-Type": "application/json" };
+  if (!isGuest && token) {
+    refreshHeaders["Authorization"] = `Bearer ${token}`;
+  }
+
+  // 2. Immediate Refresh: Use refreshHeaders
+  const firstRes = await fetch(`${API_BASE_URL}/sessions`, { headers: refreshHeaders });
   if (firstRes.ok) setSessions(await firstRes.json());
 
-  // 2. Refresh again after 5 seconds to catch the AI-generated title
+  // 3. Delayed Refresh: Use refreshHeaders
   setTimeout(async () => {
-    const secondRes = await fetch(`${API_BASE_URL}/sessions`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const secondRes = await fetch(`${API_BASE_URL}/sessions`, { headers: refreshHeaders });
     if (secondRes.ok) setSessions(await secondRes.json());
   }, 5000); 
 }

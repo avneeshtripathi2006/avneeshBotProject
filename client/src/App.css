@@ -709,19 +709,7 @@ body {
   border-radius: var(--radius-md);
   margin-top: auto;
 }
-.session-dropdown-float {
-  position: absolute;
-  right: 0;
-  top: 100%;
-  width: 160px;
-  background: var(--bg-sidebar); /* Dark background */
-  border: 1px solid var(--brd-main);
-  border-radius: 12px;
-  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
-  z-index: 2000;
-  overflow: hidden;
-  padding: 4px;
-}
+
 
 .dropdown-opt-btn {
   width: 100%;
@@ -740,25 +728,10 @@ body {
 .dropdown-opt-btn:hover { background: var(--brd-main); }
 .dropdown-opt-btn.delete-warning:hover { color: var(--sys-danger); }
 /* ✅ CRITICAL: This anchors the menu to the specific session item */
-.menu-container {
-  position: relative; 
-  display: flex;
-  align-items: center;
-}
+
 
 /* Adjust the dropdown position so it doesn't overlap the text */
-.session-dropdown-float {
-  position: absolute;
-  right: 0;
-  top: 100%; /* Appears right below the three dots */
-  width: 160px;
-  background: #161b22; /* Matches your sidebar */
-  border: 1px solid var(--brd-main);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-  z-index: 1001; /* Above everything else */
-  padding: 6px;
-}
+
 /* Styles the 'three dots' to look like a professional button */
 .session-options-trigger {
   background: transparent;
@@ -1002,12 +975,7 @@ body {
   text-overflow: ellipsis;
 }
 
-.menu-container {
-  /* ✅ FIX: Ensures the dots NEVER shrink or disappear */
-  flex-shrink: 0; 
-  position: relative;
-  margin-left: 8px;
-}
+
 /* ----------------------------------------------------------------------
    🎯 DROPDOWN BREAKOUT: Ensuring full visibility
    ---------------------------------------------------------------------- */

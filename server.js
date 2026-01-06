@@ -104,6 +104,10 @@ const formatErrorResponse = (res, statusCode, message, error = null) => {
 /* ======================================================================
  * 💾 4. COCKROACHDB CLUSTER CONNECTION
  * ====================================================================== */
+
+// ✅ ESSENTIAL: Prevents JavaScript from corrupting large CockroachDB IDs
+pg.types.setTypeParser(20, (val) => val);
+
 const { Pool } = pg;
 
 const pool = new Pool({
