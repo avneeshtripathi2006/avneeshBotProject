@@ -13,6 +13,7 @@
 import React, {
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
   // useCallback
 } from "react";
@@ -436,11 +437,18 @@ useEffect(() => {
     }
   };
 
-  useEffect(() => {
-    if (chatEndAnchor.current) {
-      chatEndAnchor.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [history]); // Triggers on every message update or history load
+
+
+// Replace your old scroll useEffect with this:
+useLayoutEffect(() => {
+  if (chatEndAnchor.current) {
+    // 'instant' prevents the jumpy animation on mobile Chrome
+    chatEndAnchor.current.scrollIntoView({ 
+      behavior: isTyping ? "smooth" : "instant", 
+      block: "end" 
+    });
+  }
+}, [history, isTyping]); // Triggers on every message update or history load
 
   // ----------------------------------------------------------------------
   // 🛠️ CRUD OPERATIONS: SESSION MANAGEMENT

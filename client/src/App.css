@@ -424,7 +424,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 32px;
+  overflow-anchor: auto !important;
   scroll-behavior: smooth;
+
 }
 
 @media (max-width: 1440px) { .message-viewport { padding: 40px 12%; } }
@@ -455,7 +457,14 @@ body {
 /* ----------------------------------------------------------------------
    💬 13. MESSAGE BUBBLE CORE STYLES
    ---------------------------------------------------------------------- */
-.message-row-v2 { display: flex; gap: 16px; max-width: 85%; animation: msgIn 0.3s var(--ease-smooth); }
+.message-row-v2 {
+  display: flex; 
+  gap: 16px; max-width: 85%;
+  animation: msgIn 0.3s var(--ease-smooth);
+  overflow-anchor: none; 
+  contain: layout style;
+  will-change: transform, opacity;
+}
 
 @keyframes msgIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -1023,4 +1032,14 @@ body {
   overflow-y: auto;
   overflow-x: visible; 
   padding: 10px 16px 80px; /* Extra bottom padding for the last item's menu */
+}
+@keyframes msgIn { 
+  from { 
+    opacity: 0; 
+    transform: translateY(8px); 
+  } 
+  to { 
+    opacity: 1; 
+    transform: translateY(0); 
+  } 
 }
