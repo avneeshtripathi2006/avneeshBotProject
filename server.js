@@ -58,9 +58,10 @@ const ai = CONFIG.GEMINI_KEY ? new GoogleGenerativeAI(CONFIG.GEMINI_KEY) : null;
  * Prioritizing the newest models from your AI Studio.
  */
 const AI_WATERFALL = [
-  { id: "gemini-3-flash-preview", label: "Gemini 3.0 Flash", priority: 1 },
-  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", priority: 2 },
-  { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro", priority: 3 }
+  { id: "gemma-3-27b-it", label: "Gemini 3 27b", priority: 1 },
+  { id: "gemini-3-flash-preview", label: "Gemini 3.0 Flash", priority: 2 },
+  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash", priority: 3 },
+  { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro", priority: 4 }
 ];
 
 /* ======================================================================
@@ -337,64 +338,76 @@ async function getOrCreateGuestUser() {
  * ====================================================================== */
 
 /**
- * @function summarizeSessionWithOllama
- * @description Periodically checks for sessions named "New Conversation" and 
- * uses the local Llama 3.1 node to generate a title.
+/**
+ * @function summarizeSessionWaterfall
+ * @description Advanced summarization with local failover to cloud waterfall.
  */
-async function summarizeSessionWithOllama(sessionId) {
+async function summarizeSessionWaterfall(sessionId) {
   try {
-    // 1. Fetch chronological history for full context retrieval
+    // 1. Fetch chronological history (limit to 10 for speed)
     const historyRes = await pool.query(
-      "SELECT message_text FROM chat_records WHERE session_id = $1 ORDER BY timestamp ASC LIMIT 20",
+      "SELECT message_text FROM chat_records WHERE session_id = $1 ORDER BY timestamp ASC LIMIT 10",
       [sessionId]
     );
 
     if (historyRes.rows.length === 0) return;
-
-    // 2. Prepare the summarization payload
     const fullConversation = historyRes.rows.map(r => r.message_text).join(" | ");
-    const summaryPrompt = `Based on this: "${fullConversation.substring(0, 1000)}", create a 4-word title. No quotes.`;
+    const summaryPrompt = `Based on this chat: "${fullConversation.substring(0, 800)}", create a 4-word title. No quotes.`;
 
+    let generatedTitle = "";
+
+    // --- TIER 1: Local Ollama ---
     if (CONFIG.OLLAMA_URL) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 80000); // 80s title-gen window
-
       try {
+        sysLogger("INFO", `Summarizer Tier 1: Local node attempting title for ${sessionId}`);
         const response = await fetch(`${CONFIG.OLLAMA_URL}/api/generate`, {
           method: "POST",
-          headers: { "Content-Type": "application/json", "ngrok-skip-browser-warning": "true" },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             model: CONFIG.OLLAMA_MODEL,
             prompt: summaryPrompt,
             stream: false,
           }),
-          signal: controller.signal
+          signal: AbortSignal.timeout(15000) // 15s faster timeout for titles
         });
-
-        clearTimeout(timeoutId);
 
         if (response.ok) {
           const data = await response.json();
-          let newTitle = data.response
-    .replace(/(Title:|Summary:)/gi, "")
-    .replace(/["\n\r]/g, "")
-    .trim()
-    .substring(0, 40);
-
-  if (newTitle) {
-    await pool.query(
-      "UPDATE chat_sessions SET session_name = $1, is_summarized = TRUE WHERE session_id = $2",
-      [newTitle, sessionId]
-    );
-    sysLogger("SUCCESS", `Title Updated: ${newTitle}`);
-  }
-}
+          generatedTitle = data.response.replace(/["\n\r]/g, "").trim();
+        }
       } catch (e) {
-        sysLogger("WARN", `Summarizer: Local node busy or offline in Kanpur. Task deferred.`);
+        sysLogger("WARN", "Summarizer Tier 1 failed/timeout. Cascading to Cloud...");
       }
     }
+
+    // --- TIER 2+: Cloud Waterfall ---
+    if (!generatedTitle && ai) {
+      for (const tier of AI_WATERFALL) {
+        try {
+          sysLogger("INFO", `Summarizer Cloud Tier: Attempting ${tier.label}...`);
+          const model = ai.getGenerativeModel({ model: tier.id });
+          const result = await model.generateContent(summaryPrompt);
+          generatedTitle = result.response.text().replace(/["\n\r]/g, "").trim();
+          
+          if (generatedTitle) break; 
+        } catch (err) {
+          sysLogger("ERROR", `Summarizer: ${tier.label} failed. Trying next...`);
+        }
+      }
+    }
+
+    // --- FINAL SYNC: Update CockroachDB ---
+    if (generatedTitle) {
+      const finalTitle = generatedTitle.substring(0, 40);
+      await pool.query(
+        "UPDATE chat_sessions SET session_name = $1, is_summarized = TRUE WHERE session_id = $2",
+        [finalTitle, sessionId]
+      );
+      sysLogger("SUCCESS", `Title Generated (${sessionId}): ${finalTitle}`);
+    }
+
   } catch (err) {
-    sysLogger("ERROR", "Background summarization logic failure.", err.message);
+    sysLogger("ERROR", "Background waterfall logic failure.", err.message);
   }
 }
 
@@ -411,7 +424,7 @@ setInterval(async () => {
     for (const row of pending.rows) {
       // Small delay between each summary to prevent overloading your Lenovo CPU
       await new Promise(resolve => setTimeout(resolve, 2000));
-      await summarizeSessionWithOllama(row.session_id);
+      await summarizeSessionWaterfall(row.session_id);
     }
   } catch (err) {
     sysLogger("ERROR", "Worker loop interval error.", err.message);

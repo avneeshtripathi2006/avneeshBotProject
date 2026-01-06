@@ -168,7 +168,7 @@ body {
    ---------------------------------------------------------------------- */
 .sidebar-engine {
   width: var(--sidebar-width);
-  height: 100%;
+  height: 100dvh;
   background-color: var(--bg-sidebar);
   border-right: 1px solid var(--brd-main);
   display: flex;
